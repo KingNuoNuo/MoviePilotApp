@@ -1,5 +1,8 @@
 package com.jinge.moviepilot.ui
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -21,11 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.jinge.moviepilot.api.MpApi
+import com.jinge.moviepilot.api.ReleaseInfo
 import com.jinge.moviepilot.api.TokenStore
+import com.jinge.moviepilot.api.UpdateChecker
 import kotlinx.coroutines.launch
 
-/** 设置页输入框：灰底圆角、无边框，聚焦时描主题色 */
-@Composable
+/** 设置页输入框：灰底圆角、无边框，聚焦时描主题色 */@Composable
 private fun SettingField(
     label: String,
     value: String,
@@ -243,6 +248,13 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+
+        // 应用更新卡片：检查更新 → 新版显示折叠的更新内容 + 更新按钮
+        Text("应用更新", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF8A8FA3))
+        Spacer(Modifier.height(8.dp))
+        UpdateCard()
+
+        Spacer(Modifier.height(16.dp))
         Surface(color = Color.White, shape = RoundedCornerShape(14.dp), shadowElevation = 1.dp) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Text("关于", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1A1C2B))
@@ -262,6 +274,162 @@ fun SettingsScreen(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD84343))
         ) {
             Text("退出登录")
+        }
+    }
+}
+
+/**
+ * 应用更新卡片：检查 GitHub 最新 Release。
+ * 有新版 → 显示版本号 + 可折叠的更新内容（默认收起）+ 更新按钮（下载完成后拉起安装器）。
+ */
+@Composable
+private fun UpdateCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val primary = MaterialTheme.colorScheme.primary
+    var currentVersion by remember { mutableStateOf(UpdateChecker.currentVersion(context)) }
+    var checking by remember { mutableStateOf(false) }
+    var checked by remember { mutableStateOf(false) }
+    var release by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    var notesExpanded by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableIntStateOf(0) }
+
+    fun doCheck() {
+        scope.launch {
+            checking = true; updateError = null; release = null; checked = false
+            try {
+                release = UpdateChecker.check(currentVersion)
+                checked = true
+            } catch (e: Exception) {
+                updateError = e.message ?: "检查失败"
+            } finally {
+                checking = false
+            }
+        }
+    }
+
+    Surface(color = Color.White, shape = RoundedCornerShape(14.dp), shadowElevation = 1.dp) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text(
+                        "当前版本 v$currentVersion",
+                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF1A1C2B)
+                    )
+                    Text(
+                        "更新源：GitHub Release",
+                        fontSize = 11.sp, color = Color(0xFFA6AABE)
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                OutlinedButton(
+                    onClick = { doCheck() },
+                    enabled = !checking && !downloading,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (checking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (checking) "检查中" else "检查更新", fontSize = 13.sp)
+                }
+            }
+
+            // 检查结果
+            updateError?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, color = Color(0xFFD84343), fontSize = 12.sp)
+            }
+            if (checked && release == null && updateError == null) {
+                Spacer(Modifier.height(10.dp))
+                Text("已是最新版本", color = Color(0xFF2E9E5B), fontSize = 13.sp)
+            }
+            release?.let { rel ->
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "发现新版本 ${rel.tag}" +
+                            if (!rel.name.isNullOrBlank() && rel.name != rel.tag) " · ${rel.name}" else "",
+                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = primary
+                )
+                // 更新内容（可折叠，默认收起）
+                val notes = rel.body?.trim().orEmpty()
+                if (notes.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        Modifier.fillMaxWidth().clickable { notesExpanded = !notesExpanded },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("更新内容", fontSize = 12.sp, color = Color(0xFF8A8FA3))
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            if (notesExpanded) "收起 ▲" else "展开 ▼",
+                            fontSize = 11.sp, color = primary, fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    androidx.compose.animation.AnimatedVisibility(visible = notesExpanded) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                notes,
+                                fontSize = 12.sp, color = Color(0xFF5C5F70),
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                // 下载 / 更新按钮
+                Button(
+                    onClick = {
+                        val apk = rel.apkUrl
+                        if (apk == null) {
+                            // 没有找到 APK 附件：浏览器打开 Release 页
+                            val i = Intent(Intent.ACTION_VIEW, Uri.parse(rel.htmlUrl))
+                            context.startActivity(i)
+                            return@Button
+                        }
+                        scope.launch {
+                            downloading = true; progress = 0
+                            try {
+                                val file = UpdateChecker.downloadApk(context, apk) { progress = it }
+                                if (!installApk(context, file)) {
+                                    updateError = "下载完成，但无法拉起安装器"
+                                }
+                            } catch (e: Exception) {
+                                updateError = e.message ?: "下载失败"
+                            } finally {
+                                downloading = false
+                            }
+                        }
+                    },
+                    enabled = !downloading,
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    if (downloading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("$progress%", fontSize = 13.sp)
+                    } else {
+                        Text("立即更新", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
         }
     }
 }

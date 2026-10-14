@@ -27,8 +27,9 @@ import coil.compose.AsyncImage
 import com.jinge.moviepilot.api.MpApi
 import com.jinge.moviepilot.api.isTv
 import com.jinge.moviepilot.api.mediaSeasons
-import com.jinge.moviepilot.api.posterUrl
+import com.jinge.moviepilot.api.posterUrlOf
 import com.jinge.moviepilot.api.str
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
@@ -90,28 +91,40 @@ fun SeasonEpisodeDialog(
     // 媒体搜索结果不带 seasons 字段，必须从服务器拉取
     var seasons by remember { mutableStateOf(mediaSeasons(media)) }
     var seasonsLoading by remember { mutableStateOf(false) }
+    var seasonsFailed by remember { mutableStateOf(false) }
+    var retryTick by remember { mutableStateOf(0) }
     var seasonEpisodes by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
     var loading by remember { mutableStateOf(false) }
     var selectedSeason by remember { mutableStateOf(seasons.firstOrNull()) }
     var selectedEpisode by remember { mutableStateOf<Int?>(null) }
     var manualSeason by remember { mutableStateOf("1") }
 
-    // 启动即查季列表 + 各季集数
-    LaunchedEffect(Unit) {
-        if (seasons.isEmpty()) {
-            seasonsLoading = true
-            try {
-                val eps = api.mediaSeasonEpisodes(media)
-                if (eps.isNotEmpty()) {
-                    seasonEpisodes = eps
-                    seasons = eps.keys.sorted()
-                    selectedSeason = selectedSeason ?: seasons.firstOrNull()
-                }
-            } catch (_: Exception) {
-            } finally {
-                seasonsLoading = false
+    // 拉取季列表（服务器实时调 TMDB，偶发失败返回空 → 自动重试一次，仍失败给手动重试按钮）
+    suspend fun fetchSeasons() {
+        seasonsLoading = true
+        seasonsFailed = false
+        try {
+            var eps = api.mediaSeasonEpisodes(media)
+            if (eps.isEmpty()) {
+                delay(1500)
+                eps = api.mediaSeasonEpisodes(media)   // 重试一次（首次实时调 TMDB 可能抖动）
             }
+            if (eps.isNotEmpty()) {
+                seasonEpisodes = eps
+                seasons = eps.keys.sorted()
+                selectedSeason = selectedSeason ?: seasons.firstOrNull()
+            } else {
+                seasonsFailed = true
+            }
+        } catch (_: Exception) {
+            seasonsFailed = true
+        } finally {
+            seasonsLoading = false
         }
+    }
+
+    LaunchedEffect(retryTick) {
+        if (seasons.isEmpty()) fetchSeasons()
     }
 
     // 选中季后查该季集数（拿不到就只按整季搜）
@@ -152,6 +165,15 @@ fun SeasonEpisodeDialog(
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                         Text("正在获取季信息…", fontSize = 13.sp, color = Color(0xFF8A8FA3))
+                    }
+                    seasonsFailed -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "季信息获取失败（服务器访问 TMDB 暂时不通）",
+                            fontSize = 13.sp, color = Color(0xFFB0621F), modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { retryTick++ }) {
+                            Text("重试", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                     seasons.isNotEmpty() -> FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SelectChip(
@@ -323,13 +345,7 @@ fun MediaSearchScreen(
             ),
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 imeAction = androidx.compose.ui.text.input.ImeAction.Search
-            ),
-            trailingIcon = {
-                // 直接搜资源（种子）
-                TextButton(onClick = {
-                    if (query.isNotBlank()) onDirectSearch(query.trim())
-                }) { Text("搜资源", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-            }
+            )
         )
     }
 
@@ -378,11 +394,27 @@ fun MediaSearchScreen(
                         .shadow(8.dp, RoundedCornerShape(28.dp), spotColor = Color(0x265A63D8))
                 )
                 Spacer(Modifier.height(20.dp))
-                Text(
-                    "输入片名搜索媒体，或点「搜资源」直接查找种子",
-                    fontSize = 12.sp,
-                    color = Color(0xFFA6AABE)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "输入片名搜索媒体",
+                        fontSize = 12.sp,
+                        color = Color(0xFFA6AABE)
+                    )
+                    Text(
+                        "  ·  ",
+                        fontSize = 12.sp,
+                        color = Color(0xFFD5D7E4)
+                    )
+                    Text(
+                        "直接搜种子资源",
+                        fontSize = 12.sp,
+                        color = Color(0xFFA6AABE),
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                        modifier = Modifier.clickable {
+                            if (query.isNotBlank()) onDirectSearch(query.trim())
+                        }
+                    )
+                }
                 Spacer(Modifier.weight(1.15f))
             }
         } else {
@@ -411,7 +443,7 @@ fun MediaSearchScreen(
                     modifier = Modifier.fillMaxSize().weight(1f)
                 ) {
                     items(results) { media ->
-                        MediaCard(media) { onSelectMedia(media) }
+                        MediaCard(api, media) { onSelectMedia(media) }
                     }
                 }
             }
@@ -420,7 +452,7 @@ fun MediaSearchScreen(
 }
 
 @Composable
-private fun MediaCard(media: JsonObject, onClick: () -> Unit) {
+private fun MediaCard(api: MpApi, media: JsonObject, onClick: () -> Unit) {
     Column(
         Modifier
             .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Color(0x1E1A1C2B))
@@ -429,10 +461,10 @@ private fun MediaCard(media: JsonObject, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(6.dp)
     ) {
-        AsyncImage(
-            model = posterUrl(media.str("poster_path")),
+        MpPosterImage(
+            api = api,
+            raw = media.str("poster_path"),
             contentDescription = media.str("title"),
-            contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.7f)

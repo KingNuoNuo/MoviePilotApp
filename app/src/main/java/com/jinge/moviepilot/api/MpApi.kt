@@ -1,5 +1,6 @@
 package com.jinge.moviepilot.api
 
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -12,6 +13,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -560,6 +562,29 @@ class MpApi(private val store: TokenStore) {
             ?: return emptyList()
         return arr.mapNotNull { it as? JsonObject }
     }
+
+    /** resource cookie（登录后服务器下发，图片代理等资源接口用）；令牌模式下没有，返回 null */
+    fun resourceCookie(): String? {
+        val base = baseUrl() ?: return null
+        val url = base.toHttpUrlOrNull() ?: return null
+        val cookies = cookieJar.loadForRequest(url)
+        return if (cookies.isEmpty()) null else cookies.joinToString("; ") { "${it.name}=${it.value}" }
+    }
+
+    /**
+     * 海报走服务器代理（/system/cache/image，服务器端带翻墙抓图并缓存）。
+     * 实测需 resource cookie（无 cookie 401），缓存后 42ms。img/proxy 端点是 422 参数错误，不可用。
+     */
+    fun imgProxyUrl(raw: String?): String? {
+        val p = posterUrlOf(raw) ?: return null
+        if (resourceCookie() == null) return null
+        val base = baseUrl() ?: return null
+        return "$base$apiPrefix/system/cache/image?url=${android.net.Uri.encode(p)}"
+    }
+
+    /** 刷新登录（resource cookie 30 分钟过期后重取）。供图片代理重试用；Mutex 防止多图并发重复登录 */
+    private val refreshMutex = kotlinx.coroutines.sync.Mutex()
+    suspend fun refreshSession(): Boolean = refreshMutex.withLock { relogin() }
 }
 
 /** JsonObject 字段宽松取值扩展 */
@@ -601,8 +626,8 @@ fun mediaSeasons(m: JsonObject): List<Int> {
     return emptyList()
 }
 
-/** 海报地址：相对路径补 TMDB 前缀 */
-fun posterUrl(raw: String?): String? {
+/** 海报地址：相对路径补 TMDB 前缀（顶层工具函数） */
+fun posterUrlOf(raw: String?): String? {
     val p = raw?.takeIf { it.isNotBlank() } ?: return null
     return if (p.startsWith("http")) p else "https://image.tmdb.org/t/p/w500$p"
 }

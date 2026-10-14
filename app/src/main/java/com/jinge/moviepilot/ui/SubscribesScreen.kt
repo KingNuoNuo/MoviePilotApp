@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.jinge.moviepilot.api.MpApi
 import com.jinge.moviepilot.api.long
-import com.jinge.moviepilot.api.posterUrl
+import com.jinge.moviepilot.api.posterUrlOf
 import com.jinge.moviepilot.api.str
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -66,7 +66,7 @@ fun SubscribesScreen(api: MpApi, key: Int) {
             ) {
                 items(subs) { sub ->
                     var confirmDelete by remember { mutableStateOf(false) }
-                    SubscribeCard(sub, onDelete = { confirmDelete = true })
+                    SubscribeCard(api, sub, onDelete = { confirmDelete = true })
                     if (confirmDelete) {
                         AlertDialog(
                             onDismissRequest = { confirmDelete = false },
@@ -105,7 +105,7 @@ fun SubscribesScreen(api: MpApi, key: Int) {
 }
 
 @Composable
-private fun SubscribeCard(sub: JsonObject, onDelete: () -> Unit) {
+private fun SubscribeCard(api: MpApi, sub: JsonObject, onDelete: () -> Unit) {
     Surface(
         color = Color.White,
         shape = RoundedCornerShape(12.dp),
@@ -113,8 +113,9 @@ private fun SubscribeCard(sub: JsonObject, onDelete: () -> Unit) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = posterUrl(sub.str("poster") ?: sub.str("poster_path") ?: sub.str("backdrop")),
+            MpPosterImage(
+                api = api,
+                raw = sub.str("poster") ?: sub.str("poster_path") ?: sub.str("backdrop"),
                 contentDescription = null,
                 modifier = Modifier
                     .width(44.dp)

@@ -259,23 +259,22 @@ private fun DownloadingCard(
     }
 }
 
-/** 下载记录标题：标题 + 季/集（seasons=Sxx、episodes=Exx） */
+/** 下载记录标题：标题 + 季/集。seasons 形如 "S01"/"S01-S05"，episodes 形如 "E05"/"E43-E47"/"E01+E02" */
 private fun historyTitle(h: JsonObject): String {
     val base = h.str("title") ?: h.str("torrent_name") ?: "未知记录"
-    val seasonNum = h.str("seasons")?.filter { it.isDigit() }?.takeIf { it.isNotBlank() }?.toIntOrNull()
-    val eps = h.str("episodes")?.filter { it.isDigit() }?.takeIf { it.isNotBlank() }
-    val parts = buildList {
-        if (seasonNum != null && seasonNum > 0) add("第${seasonNum}季")
-        if (!eps.isNullOrBlank()) {
-            // episodes 可能是 E05 或 E01-E05 / E01+E02
-            val nums = Regex("\\d+").findAll(eps).map { it.value.toInt() }.toList()
-            when {
-                nums.isEmpty() -> {}
-                nums.size == 1 -> add("第${nums[0]}集")
-                else -> add("第${nums.first()}-${nums.last()}集")
-            }
+
+    // 从 "S01-S05" / "E43-E47" / "E01+E02" 里提取数字，保留范围语义
+    fun label(field: String, unit: String): String? {
+        val raw = h.str(field)?.takeIf { it.isNotBlank() } ?: return null
+        val nums = Regex("\\d+").findAll(raw.uppercase()).map { it.value.toInt() }.toList()
+        return when {
+            nums.isEmpty() -> null
+            nums.size == 1 -> "第${nums[0]}$unit"
+            else -> "第${nums.first()}-${nums.last()}$unit"
         }
     }
+
+    val parts = listOfNotNull(label("seasons", "季"), label("episodes", "集"))
     return if (parts.isEmpty()) base else "$base ${parts.joinToString(" ")}"
 }
 

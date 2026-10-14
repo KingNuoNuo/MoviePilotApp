@@ -250,17 +250,31 @@ private fun speedScore(torrent: JsonObject?): Double? {
  * 1 = 多集包（E01-E08 这类范围）
  * 2 = 单集（要下 N 次才齐，最后）
  */
-fun torrentTier(title: String?): Int {
+/** 标题是否带明确单集/集号标记（S01E05 / S01 E05 / S01.E05 / 第1季第5集 等，容忍任意分隔符） */
+private fun hasEpisodeMark(t: String): Boolean =
+    Regex("S\\d{1,2}\\s*[.\\-_ ]?\\s*E\\s*P?\\s*\\d{1,3}", RegexOption.IGNORE_CASE).containsMatchIn(t) ||
+            Regex("第\\s*\\d{1,2}\\s*季\\s*第?\\s*\\d{1,3}\\s*集").containsMatchIn(t)
+
+fun torrentTier(title: String?, subtitle: String? = null): Int {
     val t = title ?: return 2
-    // 整季包：S01 后面不跟集号（S01E05 不算）、第N季后面不带集、Season N、S01-S03 多季合集
-    if (Regex("S\\d{1,2}(?![0-9E])", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 0
+    // 副标题里明确写「第N集」/ S01E05 的，肯定不是整季包
+    val sub = subtitle?.let { Regex("<[^>]+>").replace(it, " ") } ?: ""   // 去掉描述里的 HTML 标签
+    val subEpisode = Regex("(?<![-~至\\d])第\\s*0*\\d{1,3}\\s*集(?![0-9-~至])").containsMatchIn(sub) ||
+            Regex("S\\d{1,2}\\s*[.\\-_ ]?\\s*E\\s*P?\\s*\\d{1,3}", RegexOption.IGNORE_CASE).containsMatchIn(sub)
+    // 先判断多集包（范围），再排除带单集标记的，最后才是整季包 —— 顺序不能反
+    if (Regex("E[P]?\\d{1,3}\\s*[-~～+至]{1,2}\\s*E?P?\\d{1,3}", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 1
+    if (Regex("第\\d{1,3}\\s*[-~～+至]\\s*\\d{1,3}\\s*集").containsMatchIn(t)) return 1
+    if (hasEpisodeMark(t)) return 2
+    if (subEpisode) return 2
+    // 副标题里带集数范围（第25-26集 / E01-E08）→ 多集包
+    if (Regex("第\\s*\\d{1,3}\\s*[-~至]\\s*\\d{1,3}\\s*集").containsMatchIn(sub)) return 1
+    if (Regex("E[P]?\\d{1,3}\\s*[-~至]\\s*E?P?\\d{1,3}", RegexOption.IGNORE_CASE).containsMatchIn(sub)) return 1
+    // 整季包：S01 后面不跟集号、第N季后面不带集、Season N、S01-S03 多季合集
+    if (Regex("S\\d{1,2}(?![0-9])", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 0
     if (Regex("S\\d{1,2}\\s*[-~～]\\s*S\\d{1,2}", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 0
     if (Regex("第\\s*\\d{1,2}\\s*季(?![\\d集])").containsMatchIn(t)) return 0
     if (Regex("Season\\s*\\d{1,2}(?![0-9])", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 0
     if (Regex("全集|合集|Complete", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 0
-    // 多集包：E01-E08 / EP01~08 / E01+E02 / 第1-8集
-    if (Regex("E[P]?\\d{1,3}\\s*[-~～+至]{1,2}\\s*E?P?\\d{1,3}", RegexOption.IGNORE_CASE).containsMatchIn(t)) return 1
-    if (Regex("第\\d{1,3}\\s*[-~～+至]\\s*\\d{1,3}\\s*集").containsMatchIn(t)) return 1
     return 2
 }
 
@@ -279,7 +293,10 @@ fun sortTorrents(results: List<JsonObject>, episode: Int?): List<JsonObject> {
     } else {
         scored.sortedWith(
             compareBy(
-                { (ctx, _) -> torrentTier(ctxTorrent(ctx)?.str("title")) },
+                { (ctx, _) ->
+                    val tr = ctxTorrent(ctx)
+                    torrentTier(tr?.str("title"), tr?.str("description"))
+                },
                 { (_, s) -> -(s ?: Double.NEGATIVE_INFINITY) }
             )
         ).map { it.first }
@@ -413,7 +430,7 @@ private fun TorrentCard(
                     Spacer(Modifier.width(6.dp))
                 }
                 // 资源类型标签：整季=靛蓝 / 多集=橙 / 单集不标
-                when (torrentTier(torrent?.str("title"))) {
+                when (torrentTier(torrent?.str("title"), torrent?.str("description"))) {
                     0 -> { Tag("整季", Color(0xFFE3E5FB), Color(0xFF414BB2)); Spacer(Modifier.width(6.dp)) }
                     1 -> { Tag("多集", Color(0xFFFCEEDB), Color(0xFFB0621F)); Spacer(Modifier.width(6.dp)) }
                 }
