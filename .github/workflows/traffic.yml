@@ -2,12 +2,22 @@ name: Traffic Stats
 
 # 每天拉一次 GitHub Traffic 数据，生成 docs/traffic.svg 并回写 README 的访问统计区块。
 #
-# 优先用仓库 secret TRAFFIC_TOKEN（classic PAT，勾选 repo scope）；
-# 没配时会退回内置 GITHUB_TOKEN 试一次 —— installation token 对 traffic API
-# 并不一定有权限，若返回 403 脚本会安全跳过（exit 0，不会让 CI 变红），
-# 这时才需要在 Settings -> Secrets -> Actions 里补一个 TRAFFIC_TOKEN。
+# ⚠️ 必须配置仓库 secret：TRAFFIC_TOKEN
+#    内置 GITHUB_TOKEN 是 installation token，对 traffic API 一律返回
+#    403 "Resource not accessible by integration"（已实测），所以没有别的办法，
+#    只能存一个外部 PAT。
 #
-# 手动触发：Actions 页面 → Traffic Stats → Run workflow
+#    推荐用 fine-grained PAT（最安全）：
+#      Settings -> Developer settings -> Personal access tokens -> Fine-grained tokens
+#      → 只勾选本仓库 → Permissions -> Administration -> Read-only
+#    也可以用 classic PAT（scope 勾 repo）。
+#
+#    然后：Settings -> Secrets and variables -> Actions -> New repository secret
+#    名字填 TRAFFIC_TOKEN。
+#
+#    没配时脚本会安全跳过（exit 0，CI 保持绿色），只是统计数字不再更新。
+#
+# 手动触发：Actions 页面 → Traffic Stats -> Run workflow
 
 on:
   schedule:

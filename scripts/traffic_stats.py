@@ -226,7 +226,11 @@ def main() -> int:
         detail = exc.read().decode("utf-8", "replace")[:200]
         print(f"!! traffic API 返回 {exc.code}：{detail}")
         if exc.code in (403, 401):
-            print("   内置 GITHUB_TOKEN 无 traffic 权限，请改用 classic PAT（scope: repo）作为 TRAFFIC_TOKEN。")
+            print("   traffic API 需要仓库所有者权限，内置 GITHUB_TOKEN 一律 403（已实测）。")
+            print("   请建一把 fine-grained PAT：Settings -> Developer settings ->")
+            print("   Personal access tokens -> Fine-grained tokens，只勾选本仓库，")
+            print("   Permissions -> Administration -> Read-only；")
+            print("   再存为仓库 secret TRAFFIC_TOKEN 即可恢复每日更新。")
         return 0
     except Exception as exc:  # noqa: BLE001
         print(f"!! 请求失败：{exc}")
