@@ -1,0 +1,54 @@
+name: Traffic Stats
+
+# 每天拉一次 GitHub Traffic 数据，生成 docs/traffic.svg 并回写 README 的访问统计区块。
+#
+# 优先用仓库 secret TRAFFIC_TOKEN（classic PAT，勾选 repo scope）；
+# 没配时会退回内置 GITHUB_TOKEN 试一次 —— installation token 对 traffic API
+# 并不一定有权限，若返回 403 脚本会安全跳过（exit 0，不会让 CI 变红），
+# 这时才需要在 Settings -> Secrets -> Actions 里补一个 TRAFFIC_TOKEN。
+#
+# 手动触发：Actions 页面 → Traffic Stats → Run workflow
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # UTC 03:17，避开整点的流量高峰
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: traffic-stats
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Fetch traffic and update README
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Update traffic stats
+        env:
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/traffic_stats.py
+
+      - name: Commit updated stats
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs/traffic.svg
+          if git diff --staged --quiet; then
+            echo "统计数据无变化，跳过提交。"
+            exit 0
+          fi
+          git commit -m "docs: update traffic stats"
+          git push

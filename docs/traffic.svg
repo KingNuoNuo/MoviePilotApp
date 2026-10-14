@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="220" viewBox="0 0 780 220" role="img" aria-label="Repository traffic over the last 14 days">
+<rect width="780" height="220" rx="10" fill="#F6F8FA"/>
+<text x="46" y="24" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1F2328">近 14 天访问量 · 2026-10-01 ~ 2026-10-14</text>
+<line x1="46" y1="190.0" x2="766" y2="190.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="38" y="194.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">0</text>
+<line x1="46" y1="190.0" x2="766" y2="190.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="38" y="194.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">0</text>
+<line x1="46" y1="44.0" x2="766" y2="44.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="38" y="48.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">1</text>
+<line x1="46" y1="190" x2="766" y2="190" stroke="#D0D7DE" stroke-width="1"/>
+<text x="71.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/1</text>
+<text x="431.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/8</text>
+<text x="740.3" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/14</text>
+<rect x="636" y="12" width="9" height="9" rx="2" fill="#4F46E5"/><text x="649" y="20" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">浏览量</text>
+<rect x="698" y="12" width="9" height="9" rx="2" fill="#A5B4FC"/><text x="711" y="20" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">独立访客</text>
+</svg>
