@@ -977,6 +977,27 @@ private fun chineseNumberToInt(s: String): Int? {
     return tens * 10 + ones
 }
 
+/**
+ * 首播日显示成 `2026.8.5` 这种紧凑写法（月 / 日去掉前导零），比 `2026-08-05` 短两三个字宽，
+ * 正好和后面的「★ 评分」并在同一行还不挤。不是完整日期的（只有年份、播放平台名等）原样返回。
+ */
+private val AIR_DATE_RE = Regex("^(\\d{4})-(\\d{1,2})-(\\d{1,2})$")
+
+private fun formatAirDate(raw: String): String {
+    val m = AIR_DATE_RE.matchEntire(raw.trim()) ?: return raw
+    return "${m.groupValues[1]}.${m.groupValues[2].toInt()}.${m.groupValues[3].toInt()}"
+}
+
+/** 榜单条目海报尺寸：44dp 宽、0.7 比例 → 高约 63dp。文字区高度与它对齐，首行贴顶、信息行贴底。 */
+private val RANK_POSTER_WIDTH = 44.dp
+private val RANK_POSTER_HEIGHT = 44.dp / 0.7f
+
+/**
+ * 猫眼榜条目 `platform` 里的属性后缀（实况值形如「腾讯视频独播」「爱奇艺独播」）。
+ * 渲染时从平台名里摘掉、单独做成一颗微徽标，平台名本体才能加重一档形成层级。
+ */
+private const val PLATFORM_EXCLUSIVE_SUFFIX = "独播"
+
 /** 榜单条目小卡：点击后用标题回搜媒体（豆瓣来源的数据不能直接搜资源，需先匹配 TMDB 媒体） */
 @Composable
 private fun RankItemCard(
@@ -985,6 +1006,7 @@ private fun RankItemCard(
     item: JsonObject,
     firstAirDate: String?,
     premiereDate: String? = null,
+    platform: String? = null,
     onClick: () -> Unit,
 ) {
     // 显示用标题做「季号压成 S+数字」处理并摘出季号；点击回搜仍用原始 title（见 [rankTitleParts] 说明）
@@ -996,11 +1018,11 @@ private fun RankItemCard(
             .background(Color.White)
             .clickable(onClick = onClick)
             .padding(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        // 顶对齐：文字区被固定成海报高度，靠 SpaceBetween 把首行顶到海报上沿、信息行压到海报下沿
+        verticalAlignment = Alignment.Top
     ) {
         // 名次做成海报左上角的角标：原来它单独占「16dp 宽 + 4dp 间距」，把这 20dp 还给标题后，
         // 标题从 74dp 涨到 94dp（12sp 下约 6 字 → 15 字），「此处通往繁星」这类长名才放得下。
-        // 卡片高度由海报（44dp ÷ 0.7 ≈ 63dp）撑起，不靠这一列，所以左侧去掉名次不影响行高。
         Box {
             MpPosterImage(
                 api = api,
@@ -1008,8 +1030,8 @@ private fun RankItemCard(
                 raw = item.str("poster") ?: item.str("poster_path"),
                 contentDescription = title,
                 modifier = Modifier
-                    .width(44.dp)
-                    .aspectRatio(0.7f)
+                    .width(RANK_POSTER_WIDTH)
+                    .height(RANK_POSTER_HEIGHT)
                     .clip(RoundedCornerShape(6.dp))
                     .background(DividerColor)
             )
@@ -1049,7 +1071,14 @@ private fun RankItemCard(
             }
         }
         Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f)) {
+        // 文字区固定成海报高度：SpaceBetween 把标题顶到海报上沿、信息行压到海报下沿，
+        // 于是不管几张信息行，卡片高度都等于海报高度 —— 两列的行与行严格对齐。
+        Column(
+            Modifier
+                .weight(1f)
+                .height(RANK_POSTER_HEIGHT),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
             Text(
                 title,
                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
@@ -1057,26 +1086,75 @@ private fun RankItemCard(
                 lineHeight = 15.sp,
                 color = TextPrimary
             )
-            Spacer(Modifier.height(2.dp))
-            // 副标题：显示完整首播时间（不再显示「电视剧」这种类型字样）；
-            // 日期尚未补全时回退显示年份，避免空白。
-            Text(
-                firstAirDate?.takeIf { it.isNotBlank() }
+            // 信息行归一到统一语义：`platform`（播放平台）只有猫眼榜有，豆瓣传 null；日期两榜都从
+            // `premiereDate`（该条目所在季首播日）/ `firstAirDate` 取，都没有时回退年份。
+            // 平台做成独立入参而不是复用 firstAirDate —— 原来靠「premiereDate 是否为空」来分派，
+            // 猫眼的首播日是异步补的，没补到时平台名会落到日期行、绕过平台样式（实测出现过一行旧样式）。
+            Column {
+                val platformLine = platform?.takeIf { it.isNotBlank() }
+                val airDate = (premiereDate ?: firstAirDate)
+                    ?.takeIf { it.isNotBlank() }
                     ?: item.str("year")?.takeIf { it.isNotBlank() }
-                    ?: "",
-                fontSize = 10.sp, color = TextTertiary,
-                maxLines = 1, overflow = TextOverflow.Ellipsis
-            )
-            // 猫眼榜：第三行显示该条目所在季的首播时间（豆瓣榜第二行本身就是首播时间，传 null 即不占位）
-            premiereDate?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    it,
-                    fontSize = 10.sp, color = TextTertiary,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-            }
-            item.str("vote_average")?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" }?.let {
-                Text("★ $it", fontSize = 10.sp, color = Color(0xFFE8A33D))
+                val rating = item.str("vote_average")
+                    ?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" }
+                // 播放平台独占一行（只有猫眼榜有）。原来整串「腾讯视频独播」是裸灰字，跟下面同色同重的
+                // 日期行叠在一起没有主次；这里把「独播」这个属性后缀拆出来做一颗微徽标，平台名本体加重一档
+                // （TextSecondary + Medium），于是「谁家平台」和「什么属性」分成两段，属性弱化成装饰。
+                // 不是独播的（「全网」、空值）只渲染平台名，不会留一颗空徽标。
+                platformLine?.let { raw ->
+                    val exclusive = raw.endsWith(PLATFORM_EXCLUSIVE_SUFFIX)
+                    val name = if (exclusive) raw.dropLast(PLATFORM_EXCLUSIVE_SUFFIX.length).trim() else raw
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            name.ifBlank { raw },
+                            fontSize = 10.sp, lineHeight = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextSecondary,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            // 名字先让位：宽度不够时省略平台名，别把徽标挤出卡片
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (exclusive) {
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                PLATFORM_EXCLUSIVE_SUFFIX,
+                                fontSize = 9.sp, lineHeight = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = SelectedPillText,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(SelectedPill)
+                                    .padding(horizontal = 3.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+                // 首播日贴左、评分贴右：评分在右边缘排出一条整齐的竖线
+                if (airDate != null || rating != null) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        airDate?.let {
+                            Text(
+                                formatAirDate(it),
+                                fontSize = 10.sp, lineHeight = 12.sp, color = TextTertiary,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                // 占满剩余宽度把评分顶到右边缘；宽度不够时先省略日期
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        if (airDate != null && rating != null) Spacer(Modifier.width(6.dp))
+                        rating?.let {
+                            Text(
+                                "★ $it",
+                                fontSize = 10.sp, lineHeight = 12.sp,
+                                color = Color(0xFFE8A33D), maxLines = 1
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1230,7 +1308,8 @@ private fun MaoyanColumn(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(items) { index, item ->
-                        // 第二行显示播放平台（半宽列放不下「平台 · 上线N天」），第三行是该条目所在季的首播日
+                        // 播放平台走独立入参（第二行），首播日走 premiereDate（第三行）；平台缺失时用
+                        // 「上线7天」这类上线信息顶上，日期行则回退年份 —— 不再把平台名塞进日期位。
                         val platform = item.str("platform")?.takeIf { it.isNotBlank() }
                         val relInfo = item.str("release_info")?.takeIf { it.isNotBlank() }
                         RankItemCard(
@@ -1238,8 +1317,9 @@ private fun MaoyanColumn(
                             // 名次用插件给的 rank，缺失时按顺序回退
                             rank = item.long("rank")?.toInt() ?: (index + 1),
                             item = item,
-                            firstAirDate = platform ?: relInfo,
+                            firstAirDate = null,
                             premiereDate = item.str("media_id")?.let { dates[it] },
+                            platform = platform ?: relInfo,
                             onClick = {
                                 val t = item.str("title")
                                 if (!t.isNullOrBlank()) onPickTitle(t)
