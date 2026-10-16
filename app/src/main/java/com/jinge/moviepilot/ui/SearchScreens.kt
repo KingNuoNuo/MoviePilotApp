@@ -868,6 +868,8 @@ private fun RankingColumn(
                 LazyColumn(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
+                    // 底部留出「⌄ 更多」胶囊的高度：不然滑到最后一屏时整条提示会压住末条卡片的日期/评分行
+                    contentPadding = PaddingValues(bottom = 28.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(items.take(10)) { index, item ->
@@ -941,6 +943,40 @@ private fun ScrollMoreHint(visible: Boolean, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 榜单标题里的季号统一压成「S+数字」，并从剧名里**摘出来单独返回**。
+ *
+ * 榜单数据源给的名字本身带中文季 —— 猫眼榜尤其常见（「现在就出发 第4季」「心动的信号 第九季」
+ * 「喜剧之王单口季 第3季」）。中文季号占字形宽，在 158dp 的半宽列里常被挤到第二行；
+ * 现在把季号画到海报右下角的角标上（与左上角的名次角标对角呼应），标题行只剩剧名，最省宽度。
+ *
+ * 只匹配「第…季」这个固定格式，不会误伤剧名里自带「季」的词（如「喜剧之王单口季」）。
+ * 认不出数字（如「第十一季」以外的怪写法）时原样保留在剧名里，季号返回 null。
+ *
+ * @return `first` = 去掉季号的剧名；`second` = 季号角标文案（如 `S4`），无则 null
+ */
+private val SEASON_RE = Regex("\\s*第\\s*([0-9]+|[零一二两三四五六七八九十]+)\\s*季")
+
+private fun rankTitleParts(raw: String): Pair<String, String?> {
+    val m = SEASON_RE.find(raw) ?: return raw to null
+    val n = chineseNumberToInt(m.groupValues[1]) ?: return raw to null
+    return raw.removeRange(m.range).trim() to "S$n"
+}
+
+/** 「4 / 十 / 十二 / 二十」→ 整数；认不出返回 null（此时季号保留原文，不硬转） */
+private fun chineseNumberToInt(s: String): Int? {
+    s.toIntOrNull()?.let { return it }
+    val digits = mapOf(
+        '零' to 0, '一' to 1, '二' to 2, '两' to 2, '三' to 3, '四' to 4,
+        '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9,
+    )
+    val tenAt = s.indexOf('十')
+    if (tenAt < 0) return if (s.length == 1) digits[s[0]] else null
+    val tens = if (tenAt == 0) 1 else (digits[s[0]] ?: return null)
+    val ones = if (tenAt == s.lastIndex) 0 else (digits[s[tenAt + 1]] ?: return null)
+    return tens * 10 + ones
+}
+
 /** 榜单条目小卡：点击后用标题回搜媒体（豆瓣来源的数据不能直接搜资源，需先匹配 TMDB 媒体） */
 @Composable
 private fun RankItemCard(
@@ -951,7 +987,8 @@ private fun RankItemCard(
     premiereDate: String? = null,
     onClick: () -> Unit,
 ) {
-    val title = item.str("title") ?: "未知"
+    // 显示用标题做「季号压成 S+数字」处理并摘出季号；点击回搜仍用原始 title（见 [rankTitleParts] 说明）
+    val (title, season) = rankTitleParts(item.str("title") ?: "未知")
     Row(
         Modifier
             .fillMaxWidth()
@@ -961,33 +998,63 @@ private fun RankItemCard(
             .padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 排名（前三名用主题色突出）
-        Text(
-            "$rank",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (rank <= 3) MaterialTheme.colorScheme.primary else Color(0xFFA6AABE),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.width(16.dp)
-        )
-        Spacer(Modifier.width(4.dp))
-        MpPosterImage(
-            api = api,
-            // 猫眼榜单流水用的是 poster，宿主榜单/媒体是 poster_path，两个都兼容
-            raw = item.str("poster") ?: item.str("poster_path"),
-            contentDescription = title,
-            modifier = Modifier
-                .width(44.dp)
-                .aspectRatio(0.7f)
-                .clip(RoundedCornerShape(6.dp))
-                .background(DividerColor)
-        )
+        // 名次做成海报左上角的角标：原来它单独占「16dp 宽 + 4dp 间距」，把这 20dp 还给标题后，
+        // 标题从 74dp 涨到 94dp（12sp 下约 6 字 → 15 字），「此处通往繁星」这类长名才放得下。
+        // 卡片高度由海报（44dp ÷ 0.7 ≈ 63dp）撑起，不靠这一列，所以左侧去掉名次不影响行高。
+        Box {
+            MpPosterImage(
+                api = api,
+                // 猫眼榜单流水用的是 poster，宿主榜单/媒体是 poster_path，两个都兼容
+                raw = item.str("poster") ?: item.str("poster_path"),
+                contentDescription = title,
+                modifier = Modifier
+                    .width(44.dp)
+                    .aspectRatio(0.7f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(DividerColor)
+            )
+            // 角标外角跟海报左上角同曲率，内角收一点，贴在海报上不显得是块浮贴的补丁
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .clip(RoundedCornerShape(topStart = 6.dp, bottomEnd = 5.dp))
+                    .background(
+                        if (rank <= 3) MaterialTheme.colorScheme.primary
+                        else Color.Black.copy(alpha = 0.55f)
+                    )
+                    .padding(horizontal = 5.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    "$rank",
+                    fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                )
+            }
+            // 季号（S4 这类）画在海报右下角：与左上角名次角标对角呼应，只占两个字宽，
+            // 剧名因此能整行留给汉字。没有季号的条目（电影等）整块不渲染。
+            season?.let {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .clip(RoundedCornerShape(topStart = 5.dp, bottomEnd = 6.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        it,
+                        fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 title,
                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                lineHeight = 15.sp,
                 color = TextPrimary
             )
             Spacer(Modifier.height(2.dp))
@@ -1158,6 +1225,8 @@ private fun MaoyanColumn(
                 LazyColumn(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
+                    // 同 RankingColumn：给底部滚动提示留出高度，避免压住末条卡片
+                    contentPadding = PaddingValues(bottom = 28.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(items) { index, item ->
