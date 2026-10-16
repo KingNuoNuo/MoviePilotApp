@@ -3,10 +3,12 @@
 <text x="46" y="24" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1F2328">近 14 天访问量 · 2026-10-01 ~ 2026-10-14</text>
 <line x1="46" y1="190.0" x2="766" y2="190.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
 <text x="38" y="194.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">0</text>
-<line x1="46" y1="190.0" x2="766" y2="190.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
-<text x="38" y="194.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">0</text>
+<line x1="46" y1="117.0" x2="766" y2="117.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="38" y="121.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">1</text>
 <line x1="46" y1="44.0" x2="766" y2="44.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
-<text x="38" y="48.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">1</text>
+<text x="38" y="48.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">2</text>
+<rect x="727.3" y="44.0" width="26.0" height="146.0" rx="2" fill="#4F46E5"/>
+<rect x="735.1" y="44.0" width="10.4" height="146.0" rx="1" fill="#A5B4FC"/>
 <line x1="46" y1="190" x2="766" y2="190" stroke="#D0D7DE" stroke-width="1"/>
 <text x="71.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/1</text>
 <text x="431.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/8</text>

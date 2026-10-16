@@ -71,11 +71,11 @@ Signed release APKs are published automatically by GitHub Actions on every `v*` 
 
 | 指标 | 近 14 天 |
 | --- | ---: |
-| 页面浏览量 | 0 |
-| 独立访客 | 0 |
-| 克隆次数 | 0 |
-| 独立克隆者 | 0 |
+| 页面浏览量 | 2 |
+| 独立访客 | 2 |
+| 克隆次数 | 69 |
+| 独立克隆者 | 35 |
 
-<sub>数据窗口 2026-10-01 ~ 2026-10-14 · 由 GitHub Actions 每日更新于 2026-10-14 · 来源：GitHub Traffic API（仅统计最近 14 天）</sub>
+<sub>数据窗口 2026-10-01 ~ 2026-10-14 · 由 GitHub Actions 每日更新于 2026-10-15 · 来源：GitHub Traffic API（仅统计最近 14 天）</sub>
 
 <!-- traffic:end -->
