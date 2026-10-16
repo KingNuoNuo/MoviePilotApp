@@ -52,6 +52,16 @@ Release 签名需要 `keystore.properties`（或环境变量 `KEYSTORE_PATH` / `
 - Android 8.0+（minSdk 26）
 - 已部署 MoviePilot v3 的服务器
 
+## 许可
+
+本项目自 **v0.3** 起采用 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）发布，版权归 KingNuoNuo 所有。
+
+AGPL-3.0 的核心要求是：**任何分发本程序、或分发基于本程序修改后的版本（包括以网络服务形式对外提供），都必须把完整源代码一并公开，并以同样的许可授权。** 你可以自由使用、修改、再分发，但不能把它变成闭源的。
+
+**历史版本**：v0.2 及以前的版本以 MIT 许可发布。MIT 授权不可撤销——已经获取的历史版本副本仍可按 MIT 条款继续使用，本次变更只对 v0.3 起的版本生效。
+
+MoviePilotApp 是独立客户端，仅通过 HTTP API 与 [MoviePilot](https://github.com/jxxghp/MoviePilot)（GPL-3.0）通信，不包含其源代码。
+
 ## English
 
 **MoviePilotApp** is a third-party Android client for [MoviePilot](https://github.com/jxxghp/MoviePilot) v3, written in Kotlin with Jetpack Compose and Material 3.
@@ -62,6 +72,8 @@ Release 签名需要 `keystore.properties`（或环境变量 `KEYSTORE_PATH` / `
 - Subscription management, API-token or password login with automatic token refresh, in-app updates from GitHub Releases
 
 Signed release APKs are published automatically by GitHub Actions on every `v*` tag.
+
+Licensed under the [GNU Affero General Public License v3.0](LICENSE) since v0.3. Versions up to v0.2 were released under the MIT License.
 
 <!-- traffic:start -->
 

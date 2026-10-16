@@ -528,6 +528,12 @@ fun SettingsScreen(
                     Spacer(Modifier.width(12.dp))
                     RepoLink("项目仓库", "https://github.com/KingNuoNuo/MoviePilotApp")
                 }
+                // 许可单独占一行：AGPL-3.0 要求分发时告知许可，链接指向仓库里的 LICENSE 全文
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("开源许可", fontSize = 11.sp, color = TextTertiary)
+                    Spacer(Modifier.width(12.dp))
+                    RepoLink("AGPL-3.0", "https://github.com/KingNuoNuo/MoviePilotApp/blob/main/LICENSE")
+                }
             }
         }
 
