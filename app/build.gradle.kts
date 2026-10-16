@@ -20,8 +20,8 @@ android {
         applicationId = "com.jinge.moviepilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.3"
+        versionCode = 10
+        versionName = "0.3.1"
     }
 
     signingConfigs {

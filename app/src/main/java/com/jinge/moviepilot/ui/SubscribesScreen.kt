@@ -63,7 +63,10 @@ fun SubscribesScreen(api: MpApi, key: Int) {
     var message by remember(key) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(key) {
+    // key 里带上 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
+    LaunchedEffect(key, api.netEpoch) {
+        // 重载前先清掉上一次的错误，否则重新加载成功后错误文案还挂在界面上
+        subsError = null; wfError = null; calError = null
         // 订阅（电影/电视剧/音乐共用一份）
         try { subs = api.listSubscribes() } catch (e: Exception) { subsError = e.message } finally { subsLoading = false }
         // 工作流

@@ -357,6 +357,14 @@ fun MediaSearchScreen(
         }
     }
 
+    /**
+     * 网络恢复（切网后回到能连上服务器的网络）时，把上一次失败的搜索自动重跑一遍 ——
+     * 否则搜索结果区会一直停在「搜索失败」那行红字上，要用户手动再搜一次才恢复。
+     */
+    LaunchedEffect(api.netEpoch) {
+        if (searchedText.isNotBlank() && error != null) doMediaSearch(searchedText)
+    }
+
     /** 退出搜索结果回到首页（取消进行中的搜索，清空状态） */
     fun backToHome() {
         searchJob?.cancel(); searchJob = null
@@ -755,14 +763,17 @@ private fun TvRankingBoard(
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
+    LaunchedEffect(api.netEpoch) {
         loading = true; failed = false
         try {
             coroutineScope {
                 val c = async { runCatching { api.doubanTvWeeklyChinese(count = 10) }.getOrDefault(emptyList()) }
                 val g = async { runCatching { api.doubanTvWeeklyGlobal(count = 10) }.getOrDefault(emptyList()) }
-                chinese = c.await()
-                global = g.await()
+                // 重新加载（切网途中会短暂连不上）没拿到数据时保留上一次的榜单，
+                // 不要把首页闪成「暂无数据」；首次加载本来就空，行为和以前一致
+                c.await().takeIf { it.isNotEmpty() }?.let { chinese = it }
+                g.await().takeIf { it.isNotEmpty() }?.let { global = it }
             }
             failed = chinese.isEmpty() && global.isEmpty()
         } catch (_: Exception) {
@@ -1185,7 +1196,8 @@ private fun MaoyanRankingBoard(
     // 拿不到数据的原因提示（插件没装/未刷新），空串表示无错误
     var errMsg by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
+    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
+    LaunchedEffect(api.netEpoch) {
         loading = true; errMsg = ""
         try {
             coroutineScope {
@@ -1193,7 +1205,10 @@ private fun MaoyanRankingBoard(
                 val a = async { runCatching { api.maoyanRank("web-all", 10) }.getOrDefault(emptyList()) }
                 val b = async { runCatching { api.maoyanRank("zongyi", 10) }.getOrDefault(emptyList()) }
                 val c = async { runCatching { api.maoyanRankUpdatedAt() }.getOrNull() }
-                drama = a.await(); variety = b.await(); updatedAt = c.await()
+                // 重新加载没拿到数据时保留上一次的榜单（同豆瓣榜，见 TvRankingBoard）
+                a.await().takeIf { it.isNotEmpty() }?.let { drama = it }
+                b.await().takeIf { it.isNotEmpty() }?.let { variety = it }
+                updatedAt = c.await()
             }
             if (drama.isEmpty() && variety.isEmpty()) {
                 errMsg = "猫眼榜单暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"

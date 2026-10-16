@@ -48,6 +48,9 @@ class MpApi(private val store: TokenStore) {
         .connectTimeout(15, TimeUnit.SECONDS)
         // 轻量接口一律 60s 上限：以前全局 300s，一个挂死的请求能把整条轮询串拖停 5 分钟
         .readTimeout(60, TimeUnit.SECONDS)
+        // 遇到失效连接（典型是切换网络后连接池里那条旧连接）时换新连接重试。
+        // OkHttp 默认就是 true，这里显式写出来，避免以后被误改成 false。
+        .retryOnConnectionFailure(true)
         .cookieJar(cookieJar)
         .build()
 
@@ -63,6 +66,30 @@ class MpApi(private val store: TokenStore) {
     /** 服务器连接状态：null=未知 / true=最近请求成功 / false=失败（供顶栏状态点） */
     var serverOnline: Boolean? by mutableStateOf(null)
         private set
+
+    /**
+     * 网络环境代号：默认网络切换时自增。页面把它当成 `LaunchedEffect` 的 key，
+     * 一变化就自动重新加载 —— 不用重启 App，也不用去设置页手动「保存并连接」。
+     */
+    var netEpoch: Int by mutableStateOf(0)
+        private set
+
+    /**
+     * 默认网络发生变化（切 WiFi / 开关数据 / 从蜂窝回到 WiFi）时由 [MainActivity] 的网络回调调用。
+     *
+     * 这里必须**清空连接池**：旧网络上的那条 TCP 连接在池子里看着还是「健康」的，下一个请求会先
+     * 写进这条死连接、再一路等到 `readTimeout(60s)` 才抛 SocketTimeoutException；而这属于
+     * 「请求已发出」的超时，OkHttp 的 `retryOnConnectionFailure` 不会重试它。
+     * 用户看到的就是「切网后一直转圈、然后提示连接失败」。
+     *
+     * 自增 [netEpoch] 则让各页面立刻重新加载：原来页面只在「进页面时」加载一次，
+     * 失败后错误就被写死在界面状态里，只能切 tab 或重启 App 才会恢复。
+     */
+    fun onNetworkChanged() {
+        // streamClient 是 client.newBuilder() 出来的，共用同一个连接池，这里清一次两个都生效
+        client.connectionPool.evictAll()
+        netEpoch++
+    }
 
     companion object {
         /** 候选前缀顺序：v3.1.5 实测默认就是 /api/v1，放首位省掉每次首登的两次无谓 404 */
@@ -234,7 +261,8 @@ class MpApi(private val store: TokenStore) {
      *      2) 若 JWT 已失效，get() 内部会用记住的账号密码自动重登。
      */
     suspend fun probe() {
-        val base = baseUrl() ?: return
+        // 用 runCatching 兜住「未登录」：切网回调可能在退出登录后触发，probe 不该把 App 带崩
+        val base = runCatching { baseUrl() }.getOrNull() ?: return
         runCatching { get(base, "$apiPrefix/download/") }
     }
 

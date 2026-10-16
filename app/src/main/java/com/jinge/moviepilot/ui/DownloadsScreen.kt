@@ -156,7 +156,8 @@ fun DownloadsScreen(api: MpApi, appScope: CoroutineScope, key: Int) {
     // 否则退到 30 秒一轮。配合 repeatOnLifecycle(STARTED)，切到后台（或切去别的 tab 不再可见）
     // 就停掉定时器，回来再恢复 —— 否则光这一页轮询实测要拉约 1.58MB/5s，后台空转白白吃流量。
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(key, lifecycleOwner) {
+    // key 里带上 api.netEpoch：切换网络后立刻重载一轮，不用等下一次轮询（见 MpApi.onNetworkChanged）
+    LaunchedEffect(key, lifecycleOwner, api.netEpoch) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             refresh()
             while (true) {

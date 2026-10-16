@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 切网监听（ConnectivityManager.registerDefaultNetworkCallback）强制要求此权限；
+         缺失时调用会抛 SecurityException。MainActivity 里那处调用有 runCatching 兜底，
+         所以漏了不会崩、只会静默失效 —— 曾因此把「切网自愈」整段功能空跑，勿删。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application

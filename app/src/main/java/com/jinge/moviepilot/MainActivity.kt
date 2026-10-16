@@ -1,6 +1,10 @@
 package com.jinge.moviepilot
 
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
@@ -47,16 +51,75 @@ class MainActivity : ComponentActivity() {
      */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    /** 默认网络监听回调（在 [registerNetworkMonitor] 里注册，[onDestroy] 里注销） */
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
+
+    /** 当前默认网络；null = 此刻没有默认网络（断网中） */
+    private var currentNetwork: Network? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = TokenStore(getSharedPreferences("mp", MODE_PRIVATE))
         api = MpApi(store)
+        registerNetworkMonitor()
 
         setContent {
             MoviePilotTheme {
                 AppRoot()
             }
         }
+    }
+
+    /**
+     * 监听默认网络的变化，切换网络后自动恢复连接。
+     *
+     * 不注册这段的话：切网瞬间旧网络上的那条 TCP 连接还留在 OkHttp 连接池里，下一个请求会先写进
+     * 这条死连接、等满 60 秒 readTimeout 才报失败；而失败之后各页面只是把错误写进自己的界面状态，
+     * 没有任何人再触发一次加载 —— 结果就是「切网后连不上，必须重启 App 或去设置里点一次重新连接」。
+     *
+     * 这里只处理**默认网络**（`registerDefaultNetworkCallback`）：同一 WiFi 下漫游、BSSID 变化时
+     * 系统不会换 Network 对象，所以不会误触发无谓的重刷。
+     */
+    private fun registerNetworkMonitor() {
+        if (netCallback != null) return
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            /** 注册时系统会立刻回调一次「当前网络」，那不是变化，跳过（避免一启动就白刷一轮） */
+            private var sawFirst = false
+
+            override fun onAvailable(network: Network) {
+                val changed = sawFirst && network != currentNetwork
+                sawFirst = true
+                currentNetwork = network
+                if (changed) onNetworkSwitched()
+            }
+
+            override fun onLost(network: Network) {
+                // 只记「默认网络没了」，不在这里重刷：等新网络的 onAvailable 到了才算一次真正的切换
+                if (network == currentNetwork) currentNetwork = null
+            }
+        }
+        netCallback = callback
+        runCatching {
+            // 指定主线程 Handler：下面要改 Compose 状态（netEpoch）并启动协程，落在主线更稳妥
+            cm.registerDefaultNetworkCallback(callback, Handler(Looper.getMainLooper()))
+        }
+    }
+
+    /** 网络真的换了：清连接池 + 让各页面自动重载，并顺手刷新一次连接状态（顶栏 / 设置页圆点） */
+    private fun onNetworkSwitched() {
+        api.onNetworkChanged()
+        appScope.launch { api.probe() }
+    }
+
+    override fun onDestroy() {
+        netCallback?.let { cb ->
+            runCatching {
+                getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb)
+            }
+        }
+        netCallback = null
+        super.onDestroy()
     }
 
     @Composable

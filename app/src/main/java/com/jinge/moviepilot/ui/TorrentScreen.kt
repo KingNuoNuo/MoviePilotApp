@@ -76,7 +76,8 @@ fun TorrentListScreen(
         }
     }
 
-    LaunchedEffect(key, media, keyword, season) { load() }
+    // key 里带上 api.netEpoch：切换网络后自动重新搜索（见 MpApi.onNetworkChanged）
+    LaunchedEffect(key, media, keyword, season, api.netEpoch) { load() }
 
     fun doDownload(ctx: JsonObject) {
         scope.launch {
