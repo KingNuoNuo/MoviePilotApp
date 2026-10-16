@@ -43,9 +43,53 @@ jobs:
         run: |
           cp app/build/outputs/apk/release/app-release.apk "MoviePilotApp-${GITHUB_REF_NAME}.apk"
 
+      # Release 描述取自 CHANGELOG.md 里与本 tag 同名的那一段，避免再靠 commit 自动摘要
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # 取「## <tag>」到下一个「## 」之间的正文；tag 必须整词匹配，避免 v0.2 命中 v0.2.1
+          awk -v tag="$TAG" '
+            index($0, "## ") == 1 {
+              if (found) exit
+              split(substr($0, 4), w, " ")
+              if (w[1] == tag) found = 1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            printf '本版本尚未在 CHANGELOG.md 中登记（tag %s）。\n' "$TAG" > release-notes.md
+          fi
+
+          # 去掉正文开头/结尾的空行，以及结尾那条属于 CHANGELOG 的「---」分隔线（页脚会另加一条）
+          awk '
+            { line[NR] = $0 }
+            END {
+              first = 1
+              while (first <= NR && line[first] ~ /^[[:space:]]*$/) first++
+              last = NR
+              while (last >= first && line[last] ~ /^[[:space:]]*$/) last--
+              if (last >= first && line[last] == "---") {
+                last--
+                while (last >= first && line[last] ~ /^[[:space:]]*$/) last--
+              }
+              for (i = first; i <= last; i++) print line[i]
+            }
+          ' release-notes.md > release-notes.trimmed
+          mv release-notes.trimmed release-notes.md
+
+          printf '\n---\n\n其余版本见 [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md)。\n' \
+            "$GITHUB_REPOSITORY" >> release-notes.md
+
+          echo "===== Release 描述 ====="
+          cat release-notes.md
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: MoviePilotApp-*.apk
-          generate_release_notes: true
+          body_path: release-notes.md
