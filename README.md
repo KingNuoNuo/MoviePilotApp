@@ -83,11 +83,11 @@ Licensed under the [GNU Affero General Public License v3.0](LICENSE) since v0.3.
 
 | 指标 | 近 14 天 |
 | --- | ---: |
-| 页面浏览量 | 2 |
-| 独立访客 | 2 |
-| 克隆次数 | 69 |
-| 独立克隆者 | 35 |
+| 页面浏览量 | 11 |
+| 独立访客 | 6 |
+| 克隆次数 | 89 |
+| 独立克隆者 | 45 |
 
-<sub>数据窗口 2026-10-01 ~ 2026-10-14 · 由 GitHub Actions 每日更新于 2026-10-15 · 来源：GitHub Traffic API（仅统计最近 14 天）</sub>
+<sub>数据窗口 2026-10-02 ~ 2026-10-15 · 由 GitHub Actions 每日更新于 2026-10-16 · 来源：GitHub Traffic API（仅统计最近 14 天）</sub>
 
 <!-- traffic:end -->
