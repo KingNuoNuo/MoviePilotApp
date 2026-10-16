@@ -16,9 +16,9 @@ import com.jinge.moviepilot.api.MpApi
 import com.jinge.moviepilot.api.posterUrlOf
 
 /**
- * 海报图：优先走服务器代理（外网连不上 TMDB 时仍能出图）。
+ * 海报图：优先走服务器代理（服务器端抓图并缓存，豆瓣图由服务器补 Referer）。
  * 代理失败（常见是 resource cookie 30 分钟过期）→ 自动重登刷新 cookie 再试一次 → 仍失败才回退直连。
- * 令牌模式（无 resource cookie）直接用原始地址。
+ * 接口令牌模式（无 resource cookie）直接走直连；豆瓣图直连时补 Referer 绕过防盗链。
  */
 @Composable
 fun MpPosterImage(
@@ -46,7 +46,14 @@ fun MpPosterImage(
     AsyncImage(
         model = ImageRequest.Builder(LocalContext.current)
             .data(if (attempt >= 2) direct else proxy)
-            .apply { if (attempt < 2) cookie?.let { addHeader("Cookie", it) } }
+            .apply {
+                if (attempt < 2) {
+                    cookie?.let { addHeader("Cookie", it) }
+                } else if (direct?.contains("doubanio.com") == true) {
+                    // 豆瓣图有防盗链：无 Referer 返回 418，直连时必须补上
+                    addHeader("Referer", "https://movie.douban.com/")
+                }
+            }
             .build(),
         contentDescription = contentDescription,
         contentScale = contentScale,

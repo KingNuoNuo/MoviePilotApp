@@ -426,25 +426,25 @@ private fun TorrentCard(
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isRecommended) {
-                    Tag("★推", Color(0xFF2E9E5B), Color.White)
+                    Tag("★推", SuccessGreen, Color.White)
                     Spacer(Modifier.width(6.dp))
                 }
                 // 资源类型标签：整季=靛蓝 / 多集=橙 / 单集不标
                 when (torrentTier(torrent?.str("title"), torrent?.str("description"))) {
-                    0 -> { Tag("整季", Color(0xFFE3E5FB), Color(0xFF414BB2)); Spacer(Modifier.width(6.dp)) }
+                    0 -> { Tag("整季", TagDownloadBg, SelectedPillText); Spacer(Modifier.width(6.dp)) }
                     1 -> { Tag("多集", Color(0xFFFCEEDB), Color(0xFFB0621F)); Spacer(Modifier.width(6.dp)) }
                 }
                 val siteName = torrent?.str("site_name")
                 siteName?.let {
-                    Tag(it, Color(0xFFE3E5FB), Color(0xFF414BB2))
+                    Tag(it, TagDownloadBg, SelectedPillText)
                     Spacer(Modifier.width(6.dp))
                 }
                 torrent?.long("size")?.let {
-                    Tag(humanSize(it), Color(0xFFF0F1F5), Color(0xFF5C5F70))
+                    Tag(humanSize(it), TagWaitBg, TextSecondary)
                     Spacer(Modifier.width(6.dp))
                 }
                 torrent?.long("seeders")?.let {
-                    if (it > 0) Tag("做种$it", Color(0xFFE4F5EC), Color(0xFF2E9E5B))
+                    if (it > 0) Tag("做种$it", TagDoneBg, SuccessGreen)
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onSubscribe, contentPadding = PaddingValues(horizontal = 8.dp)) {

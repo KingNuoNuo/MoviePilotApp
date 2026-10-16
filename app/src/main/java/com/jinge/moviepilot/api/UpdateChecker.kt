@@ -32,7 +32,7 @@ object UpdateChecker {
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    /** 当前 App 版本名（如 0.1.5） */
+    /** 当前 App 版本名（如 0.2） */
     fun currentVersion(context: Context): String = try {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.0"
     } catch (_: Exception) {

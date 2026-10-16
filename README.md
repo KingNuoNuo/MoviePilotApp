@@ -14,7 +14,7 @@
 [![Top Language](https://img.shields.io/github/languages/top/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp)
 [![Build](https://github.com/KingNuoNuo/MoviePilotApp/actions/workflows/release.yml/badge.svg)](https://github.com/KingNuoNuo/MoviePilotApp/actions/workflows/release.yml)
 
-[⬇️ 下载 APK](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) · [🐛 反馈问题](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💡 功能建议](https://github.com/KingNuoNuo/MoviePilotApp/issues)
+[⬇️ 下载 APK](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) · [📋 更新日志](CHANGELOG.md) · [🐛 反馈问题](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💡 功能建议](https://github.com/KingNuoNuo/MoviePilotApp/issues)
 
 `Android` `Kotlin` `Jetpack Compose` `Material3` `MoviePilot` `Media Server` `TMDb` `Emby` `Jellyfin` `STRM` `Torrent` `Downloader` `NAS` `Self-hosted`
 

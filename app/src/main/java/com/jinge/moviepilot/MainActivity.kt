@@ -16,6 +16,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import com.jinge.moviepilot.api.MpApi
@@ -36,6 +39,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: TokenStore
     private lateinit var api: MpApi
 
+    /**
+     * 应用级协程作用域：绑定进程生命周期、用 SupervisorJob，某个子任务失败不会连带取消别的。
+     * 下载页的批量提交（重新整理 N / 待人工复核）跑在这里 —— 这些任务一旦提交就应跑到底，
+     * 不能因为用户切到别的 tab（下载页离开组合、`rememberCoroutineScope` 被取消）就静默中断，
+     * 否则几十条整理会「提交一半就消失」。
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = TokenStore(getSharedPreferences("mp", MODE_PRIVATE))
@@ -50,7 +61,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun AppRoot() {
-        var loggedIn by remember { mutableStateOf(store.token != null || store.apiToken != null) }
+        var loggedIn by remember { mutableStateOf(store.token != null) }
         if (!loggedIn) {
             LoginScreen(api, store) { loggedIn = true }
             return
@@ -97,10 +108,12 @@ class MainActivity : ComponentActivity() {
                             onSelectMedia = { selectedMedia = it; directKeyword = null },
                             onDirectSearch = { directKeyword = it; selectedMedia = null },
                             onSelectTab = { tab = it },
+                            showRanking = store.homeTvRanking,
+                            showMaoyanRanking = store.homeMaoyanRanking,
                             onBack = { backToList() },
                             key = logoutTick
                         )
-                        1 -> DownloadsScreen(api, key = logoutTick)
+                        1 -> DownloadsScreen(api, appScope, key = logoutTick)
                         2 -> SubscribesScreen(api, key = logoutTick)
                         3 -> SettingsScreen(api, store, onLogout = {
                             store.clear()
