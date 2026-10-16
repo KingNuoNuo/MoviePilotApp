@@ -1099,7 +1099,7 @@ private fun HistoryCard(
     appScope: CoroutineScope,
     failCount: Int = 0,
     pendingRedo: Boolean = false,
-    // 副标题覆盖：整理记录页签传「整理于 MM-dd HH:mm · 分类」；为空时按 `h` 自动拼「站点 · 下载时间」
+    // 副标题覆盖：整理记录页签传「整理于 MM-dd HH:mm · 分类」；为空时按 `h` 自动拼「站点 chip + 下载时间」
     subOverride: String? = null,
     onRedoSubmitted: () -> Unit = {},
     onMessage: (String) -> Unit,
@@ -1153,14 +1153,36 @@ private fun HistoryCard(
                     )
                 }
             }
-            // 整理记录页签用 subOverride 传「整理于 … · 分类」；下载记录页签自动拼「站点 · 下载时间」
-            val sub = subOverride ?: listOfNotNull(
-                h.str("torrent_site")?.let { "站点：$it" },
-                h.str("date")?.takeIf { it.isNotBlank() }?.take(16)?.replace('T', ' '),
-            ).joinToString("  ·  ")
-            if (sub.isNotBlank()) {
+            // 「整理记录」页签用 subOverride 传「整理于 … · 分类」的纯文本；「下载记录」页签的副行是
+            // 「站点 + 下载时间」——站点沿用「正在下载」卡片那套浅靛蓝 chip（公共 [InboundTag]），
+            // 不再写成「站点：观众 · 时间」的灰字串，两页签的站点呈现于是完全一致。
+            val site = h.str("torrent_site")?.takeIf { it.isNotBlank() }
+            val dlDate = h.str("date")?.takeIf { it.isNotBlank() }?.take(16)?.replace('T', ' ')
+            if (subOverride != null) {
                 Spacer(Modifier.height(2.dp))
-                Text(sub, fontSize = 12.sp, color = TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subOverride, fontSize = 12.sp, color = TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else if (site != null || dlDate != null) {
+                Spacer(Modifier.height(2.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (site != null) {
+                        InboundTag(
+                            text = site,
+                            bg = SelectedPill,
+                            fg = SelectedPillText,
+                            // chip 定宽上限 96dp（与正在下载一致）：超长站点名内部省略，不会挤掉时间
+                            modifier = Modifier.widthIn(max = 96.dp),
+                        )
+                        if (dlDate != null) Spacer(Modifier.width(5.dp))
+                    }
+                    if (dlDate != null) {
+                        Text(
+                            dlDate,
+                            fontSize = 12.sp, color = TextTertiary,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
