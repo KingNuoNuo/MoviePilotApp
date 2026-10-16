@@ -13,8 +13,9 @@
 [![Last Commit](https://img.shields.io/github/last-commit/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp/commits/main)
 [![Top Language](https://img.shields.io/github/languages/top/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp)
 [![Build](https://github.com/KingNuoNuo/MoviePilotApp/actions/workflows/release.yml/badge.svg)](https://github.com/KingNuoNuo/MoviePilotApp/actions/workflows/release.yml)
+[![Telegram](https://img.shields.io/badge/Telegram-交流群组-4F46E5?style=flat&logo=telegram&logoColor=white)](https://t.me/+5THbEeY2QLNjNjI1)
 
-[⬇️ 下载 APK](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) · [📋 更新日志](CHANGELOG.md) · [🐛 反馈问题](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💡 功能建议](https://github.com/KingNuoNuo/MoviePilotApp/issues)
+[⬇️ 下载 APK](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) · [📋 更新日志](CHANGELOG.md) · [🐛 反馈问题](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💡 功能建议](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💬 Telegram 交流群](https://t.me/+5THbEeY2QLNjNjI1)
 
 `Android` `Kotlin` `Jetpack Compose` `Material3` `MoviePilot` `Media Server` `TMDb` `Emby` `Jellyfin` `STRM` `Torrent` `Downloader` `NAS` `Self-hosted`
 
