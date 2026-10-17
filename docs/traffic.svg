@@ -1,20 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="780" height="220" viewBox="0 0 780 220" role="img" aria-label="Repository traffic over the last 14 days">
 <rect width="780" height="220" rx="10" fill="#F6F8FA"/>
-<text x="46" y="24" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1F2328">近 14 天访问量 · 2026-10-02 ~ 2026-10-15</text>
+<text x="46" y="24" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#1F2328">近 14 天访问量 · 2026-10-03 ~ 2026-10-16</text>
 <line x1="46" y1="190.0" x2="766" y2="190.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
 <text x="38" y="194.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">0</text>
 <line x1="46" y1="117.0" x2="766" y2="117.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
-<text x="38" y="121.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">5</text>
+<text x="38" y="121.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">25</text>
 <line x1="46" y1="44.0" x2="766" y2="44.0" stroke="#D0D7DE" stroke-width="1" stroke-dasharray="3 3"/>
-<text x="38" y="48.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10</text>
-<rect x="675.9" y="160.8" width="26.0" height="29.2" rx="2" fill="#4F46E5"/>
-<rect x="683.7" y="160.8" width="10.4" height="29.2" rx="1" fill="#A5B4FC"/>
-<rect x="727.3" y="58.6" width="26.0" height="131.4" rx="2" fill="#4F46E5"/>
-<rect x="735.1" y="117.0" width="10.4" height="73.0" rx="1" fill="#A5B4FC"/>
+<text x="38" y="48.0" text-anchor="end" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">50</text>
+<rect x="624.4" y="184.2" width="26.0" height="5.8" rx="2" fill="#4F46E5"/>
+<rect x="632.2" y="184.2" width="10.4" height="5.8" rx="1" fill="#A5B4FC"/>
+<rect x="675.9" y="163.7" width="26.0" height="26.3" rx="2" fill="#4F46E5"/>
+<rect x="683.7" y="175.4" width="10.4" height="14.6" rx="1" fill="#A5B4FC"/>
+<rect x="727.3" y="55.7" width="26.0" height="134.3" rx="2" fill="#4F46E5"/>
+<rect x="735.1" y="122.8" width="10.4" height="67.2" rx="1" fill="#A5B4FC"/>
 <line x1="46" y1="190" x2="766" y2="190" stroke="#D0D7DE" stroke-width="1"/>
-<text x="71.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/2</text>
-<text x="431.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/9</text>
-<text x="740.3" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/15</text>
+<text x="71.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/3</text>
+<text x="431.7" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/10</text>
+<text x="740.3" y="210" text-anchor="middle" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">10/16</text>
 <rect x="636" y="12" width="9" height="9" rx="2" fill="#4F46E5"/><text x="649" y="20" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">浏览量</text>
 <rect x="698" y="12" width="9" height="9" rx="2" fill="#A5B4FC"/><text x="711" y="20" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10" fill="#57606A">独立访客</text>
 </svg>
