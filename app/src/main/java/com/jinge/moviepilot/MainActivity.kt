@@ -2,6 +2,7 @@ package com.jinge.moviepilot
 
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Scaffold
@@ -37,13 +39,14 @@ import com.jinge.moviepilot.ui.MpTopBar
 import com.jinge.moviepilot.ui.DownloadsScreen
 import com.jinge.moviepilot.ui.LoginScreen
 import com.jinge.moviepilot.ui.MoviePilotTheme
+import com.jinge.moviepilot.ui.OrganizeBar
 import com.jinge.moviepilot.ui.SearchFlow
 import com.jinge.moviepilot.ui.SettingsScreen
 import com.jinge.moviepilot.ui.SubscribesScreen
+import com.jinge.moviepilot.ui.rememberOrganizeProgress
 import kotlinx.serialization.json.JsonObject
 
 class MainActivity : ComponentActivity() {
-
     private lateinit var store: TokenStore
     private lateinit var api: MpApi
 
@@ -60,6 +63,13 @@ class MainActivity : ComponentActivity() {
 
     /** 当前默认网络；null = 此刻没有默认网络（断网中） */
     private var currentNetwork: Network? = null
+
+    /** 最近一次「已验证可出网」的网络：只有它的变化才算一次真正的网络切换 */
+    private var validatedNetwork: Network? = null
+
+    /** 网络事件的合并窗口（ms）：切网瞬间会连来多个回调，合并成一次重载 */
+    private val networkHandler = Handler(Looper.getMainLooper())
+    private val reloadRunnable = Runnable { onNetworkSwitched() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,31 +93,64 @@ class MainActivity : ComponentActivity() {
      *
      * 这里只处理**默认网络**（`registerDefaultNetworkCallback`）：同一 WiFi 下漫游、BSSID 变化时
      * 系统不会换 Network 对象，所以不会误触发无谓的重刷。
+     *
+     * ⚠️ 触发条件是「网络**已验证可出网**（NET_CAPABILITY_VALIDATED）」而不是 onAvailable：
+     * onAvailable 只代表链路连上，DHCP / DNS / 路由多半还没就绪，那一刻重载必然失败，而
+     * netEpoch 不会再变第二遍 —— 界面就把错误写死了（用户看到「切网后报错、切回来也不刷」）。
+     * 另外 onAvailable 的 Network 对象会按 netId 复用，断开再连回同一 WiFi 时对象相等，
+     * 靠 `network != currentNetwork` 判断会漏掉恢复事件，所以改用「验证态」作为唯一判据。
      */
     private fun registerNetworkMonitor() {
         if (netCallback != null) return
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
-            /** 注册时系统会立刻回调一次「当前网络」，那不是变化，跳过（避免一启动就白刷一轮） */
-            private var sawFirst = false
+            /** 注册时系统会立刻回调一次「当前网络 + 它的能力」，那不是变化，跳过（避免一启动就白刷） */
+            private var sawFirstValidated = false
 
             override fun onAvailable(network: Network) {
-                val changed = sawFirst && network != currentNetwork
-                sawFirst = true
+                // 只记住它；真正触发重刷等 onCapabilitiesChanged 里的 VALIDATED
                 currentNetwork = network
-                if (changed) onNetworkSwitched()
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                if (network != currentNetwork) return
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    // 原来能出网、现在不能了（同一网络掉公网）→ 清掉标记，
+                    // 等它重新验证通过时才算一次恢复
+                    if (network == validatedNetwork) validatedNetwork = null
+                    return
+                }
+                val first = !sawFirstValidated
+                sawFirstValidated = true
+                if (first || network == validatedNetwork) return
+                validatedNetwork = network
+                // 晚一点点再刷：验证通过瞬间 DNS / 路由偶尔还在收尾，且切网会连来多个回调，
+                // 合并成一次（见 [scheduleNetworkReload]）
+                scheduleNetworkReload()
             }
 
             override fun onLost(network: Network) {
-                // 只记「默认网络没了」，不在这里重刷：等新网络的 onAvailable 到了才算一次真正的切换
+                // 只记「默认网络没了」，不在这里重刷：等新网络的验证回调到了才算一次真正的切换
                 if (network == currentNetwork) currentNetwork = null
+                if (network == validatedNetwork) validatedNetwork = null
             }
         }
         netCallback = callback
         runCatching {
             // 指定主线程 Handler：下面要改 Compose 状态（netEpoch）并启动协程，落在主线更稳妥
-            cm.registerDefaultNetworkCallback(callback, Handler(Looper.getMainLooper()))
+            cm.registerDefaultNetworkCallback(callback, networkHandler)
         }
+    }
+
+    /**
+     * 合并短时间内的多次网络事件，只刷一次。
+     *
+     * 切网瞬间会连来 onAvailable / onCapabilitiesChanged（甚至先 Lost 再 Available），
+     * 每个回调都 evictAll + netEpoch++ 会让每个页面连刷 2~3 轮（首页榜单能看到「加载中」闪）。
+     */
+    private fun scheduleNetworkReload() {
+        networkHandler.removeCallbacks(reloadRunnable)
+        networkHandler.postDelayed(reloadRunnable, NET_SETTLE_MS)
     }
 
     /** 网络真的换了：清连接池 + 让各页面自动重载，并顺手刷新一次连接状态（顶栏 / 设置页圆点） */
@@ -117,6 +160,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        networkHandler.removeCallbacks(reloadRunnable)
         netCallback?.let { cb ->
             runCatching {
                 getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb)
@@ -136,6 +180,8 @@ class MainActivity : ComponentActivity() {
 
         var tab by remember { mutableIntStateOf(0) }
         var logoutTick by remember { mutableIntStateOf(0) }
+        // 全局整理进度：跨板块常驻的顶部进度条（轮询宿主整理队列，见 ui/OrganizeBar.kt）
+        val organize = rememberOrganizeProgress(api)
 
         // 启动/升级后自动探测连接：顶栏状态立即生效，JWT 失效时自动重登
         val probeScope = rememberCoroutineScope()
@@ -173,53 +219,71 @@ class MainActivity : ComponentActivity() {
                         .padding(padding)
                         .fillMaxSize()
                 ) {
-                    // 搜索流常驻组合：`when(tab)` 切板块会把 SearchFlow 移出组合、内部
-                    // remember 状态清空，搜索结果随之消失。非搜索板块时折叠为 0 尺寸隐藏，
-                    // 切回时搜索词 / 结果 / 榜单页签原样恢复；登出仍靠 logoutTick 重置。
-                    // ⚠️ 两点：
-                    // 1. 隐藏态下 BackHandler 必须失效（visible=false），否则在其他板块按返回键会被它拦截；
-                    // 2. size(0.dp) 只压测量不裁绘制，必须加 clipToBounds() 真正裁掉；
-                    //    且 size(0) 必须在链首 —— 外层若先 fillMaxSize，内层约束被强制成
-                    //    min=max=全屏，0 会被 coerce 回全屏 → 永远压不小（踩过两次）。
-                    Box(
-                        Modifier.then(
-                            if (tab == 0) Modifier.fillMaxSize()
-                            else Modifier.size(0.dp).clipToBounds()
-                        )
-                    ) {
-                        SearchFlow(
-                            api = api,
-                            selectedMedia = selectedMedia,
-                            directKeyword = directKeyword,
-                            onSelectMedia = { selectedMedia = it; directKeyword = null },
-                            onDirectSearch = { directKeyword = it; selectedMedia = null },
-                            onSelectTab = { tab = it },
-                            visible = tab == 0,
-                            showRanking = store.homeTvRanking,
-                            showMaoyanRanking = store.homeMaoyanRanking,
-                            showMovieRanking = store.homeMovieRanking,
-                            // 设置页「榜单」卡里调好的页签顺序（排序条拖动）
-                            rankingOrder = store.homeRankingOrder,
-                            // 设置页「搜索」分组的四项偏好（改了回搜索页即生效）
-                            strategy = store.searchSortStrategy,
-                            qualityPref = store.qualityPref,
-                            showDirectSearch = store.showDirectSearch,
-                            showMediaMeta = store.showMediaMeta,
-                            onBack = { backToList() },
-                            key = logoutTick
-                        )
-                    }
-                    when (tab) {
-                        1 -> DownloadsScreen(api, appScope, key = logoutTick)
-                        2 -> SubscribesScreen(api, key = logoutTick)
-                        3 -> SettingsScreen(api, store, onLogout = {
-                            store.clear()
-                            loggedIn = false
-                            logoutTick++
-                        })
+                    Column(Modifier.fillMaxSize()) {
+                        // 全局整理进度条：顶栏正下方、四个板块都能看到；队列清空自动收起。
+                        // 点它跳「下载」板块看明细。放在 Column 顶部而不是各页面里，才能跨页面常驻。
+                        OrganizeBar(organize, onClick = { tab = 1 })
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            // 搜索流常驻组合：`when(tab)` 切板块会把 SearchFlow 移出组合、内部
+                            // remember 状态清空，搜索结果随之消失。非搜索板块时折叠为 0 尺寸隐藏，
+                            // 切回时搜索词 / 结果 / 榜单页签原样恢复；登出仍靠 logoutTick 重置。
+                            // ⚠️ 两点：
+                            // 1. 隐藏态下 BackHandler 必须失效（visible=false），否则在其他板块按返回键会被它拦截；
+                            // 2. size(0.dp) 只压测量不裁绘制，必须加 clipToBounds() 真正裁掉；
+                            //    且 size(0) 必须在链首 —— 外层若先 fillMaxSize，内层约束被强制成
+                            //    min=max=全屏，0 会被 coerce 回全屏 → 永远压不小（踩过两次）。
+                            Box(
+                                Modifier.then(
+                                    if (tab == 0) Modifier.fillMaxSize()
+                                    else Modifier.size(0.dp).clipToBounds()
+                                )
+                            ) {
+                                SearchFlow(
+                                    api = api,
+                                    selectedMedia = selectedMedia,
+                                    directKeyword = directKeyword,
+                                    onSelectMedia = { selectedMedia = it; directKeyword = null },
+                                    onDirectSearch = { directKeyword = it; selectedMedia = null },
+                                    onSelectTab = { tab = it },
+                                    visible = tab == 0,
+                                    showRanking = store.homeTvRanking,
+                                    showMaoyanRanking = store.homeMaoyanRanking,
+                                    showMovieRanking = store.homeMovieRanking,
+                                    // 设置页「榜单」卡里调好的页签顺序（排序条拖动）
+                                    rankingOrder = store.homeRankingOrder,
+                                    // 设置页「搜索」分组的四项偏好（改了回搜索页即生效）
+                                    strategy = store.searchSortStrategy,
+                                    qualityPref = store.qualityPref,
+                                    showDirectSearch = store.showDirectSearch,
+                                    showMediaMeta = store.showMediaMeta,
+                                    onBack = { backToList() },
+                                    key = logoutTick
+                                )
+                            }
+                            when (tab) {
+                                // 整理提交后让顶部进度条立刻出现，不用等下一次轮询
+                                1 -> DownloadsScreen(
+                                    api, appScope, key = logoutTick,
+                                    onOrganizeSubmitted = { organize.refreshNow() }
+                                )
+                                2 -> SubscribesScreen(api, key = logoutTick)
+                                3 -> SettingsScreen(api, store, onLogout = {
+                                    store.clear()
+                                    loggedIn = false
+                                    logoutTick++
+                                })
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/** 网络事件的合并窗口（ms）：切网瞬间会连来多个回调，合并成一次重载，避免各页面连刷几轮 */
+private const val NET_SETTLE_MS = 1_200L

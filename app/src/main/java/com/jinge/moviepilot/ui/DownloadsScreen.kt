@@ -59,7 +59,13 @@ private enum class DownloadTab(val label: String) {
  * 5 秒自动刷新。
  */
 @Composable
-fun DownloadsScreen(api: MpApi, appScope: CoroutineScope, key: Int) {
+fun DownloadsScreen(
+    api: MpApi,
+    appScope: CoroutineScope,
+    key: Int,
+    /** 提交整理后回调：让顶部的全局整理进度条立刻刷新（不用等下一次轮询） */
+    onOrganizeSubmitted: () -> Unit = {},
+) {
     var tab by remember(key) { mutableStateOf(DownloadTab.Downloading) }
     // 首次拿到数据后是否已经选过起始页签（避免加载完成后又跳一次）
     var tabInit by remember(key) { mutableStateOf(false) }
@@ -324,6 +330,8 @@ fun DownloadsScreen(api: MpApi, appScope: CoroutineScope, key: Int) {
                                                 signature = transferSignature(transfers[hashKey]),
                                                 startedAt = System.currentTimeMillis(),
                                             ))
+                                            // 顶部全局进度条立刻补一轮（队列里应该有这条了）
+                                            onOrganizeSubmitted()
                                         }
                                     },
                                     onMessage = {
@@ -524,6 +532,8 @@ fun DownloadsScreen(api: MpApi, appScope: CoroutineScope, key: Int) {
                                 .mapNotNull { id -> hashById[id]?.takeIf { it.isNotBlank() } }
                                 .distinct()
                                 .associateWith { RedoPending(transferSignature(transfers[it]), startedAt) }
+                            // 顶部全局进度条立刻补一轮：这批刚进宿主整理队列
+                            if (submittedIds.isNotEmpty()) onOrganizeSubmitted()
                             refresh()
                         } catch (e: Exception) {
                             msg = "操作失败：${e.message}"
@@ -613,6 +623,8 @@ fun DownloadsScreen(api: MpApi, appScope: CoroutineScope, key: Int) {
                             }
                             // 失败原因先留住，别被逐条「整理完成」提示挤掉
                             msgHoldUntil = System.currentTimeMillis() + 10_000
+                            // 顶部全局进度条立刻补一轮：复核通过的这批又开始整理了
+                            if (submitted.isNotEmpty()) onOrganizeSubmitted()
                             refresh()
                         } catch (e: Exception) {
                             msg = "操作失败：${e.message}"

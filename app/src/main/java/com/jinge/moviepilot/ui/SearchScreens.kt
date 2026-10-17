@@ -1009,26 +1009,45 @@ private fun TvRankingBoard(
     var dates by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
+    // 失败原因是「连不上服务器」（抖动，会自愈）还是「服务端没数据」（要用户处理）——决定提示文案
+    var offline by remember { mutableStateOf(false) }
 
-    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
+    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）。
+    // ⚠️ 只重载一次不够：切网回调到达时新网络往往还没真正通（DHCP / DNS / 路由就绪要几秒），
+    // 这一轮必然失败、netEpoch 又不会再变 → 错误被写死，用户只能切到别的榜再切回来。
+    // 所以失败后按 retryDelayMs 退避自愈，拿到数据即止（协程随页面离开自动取消）。
     LaunchedEffect(api.netEpoch) {
-        loading = true; failed = false
-        try {
-            coroutineScope {
-                val c = async { runCatching { api.doubanTvWeeklyChinese(count = 10) }.getOrDefault(emptyList()) }
-                val g = async { runCatching { api.doubanTvWeeklyGlobal(count = 10) }.getOrDefault(emptyList()) }
-                // 重新加载（切网途中会短暂连不上）没拿到数据时保留上一次的榜单，
-                // 不要把首页闪成「暂无数据」；首次加载本来就空，行为和以前一致
-                c.await().takeIf { it.isNotEmpty() }?.let { chinese = it }
-                g.await().takeIf { it.isNotEmpty() }?.let { global = it }
+        var attempt = 0
+        while (true) {
+            if (attempt > 0) delay(retryDelayMs(attempt - 1))
+            // 首次才显示「加载中」，静默重试不闪屏
+            loading = attempt == 0
+            failed = false
+            offline = false
+            try {
+                coroutineScope {
+                    val c = async { runCatching { api.doubanTvWeeklyChinese(count = 10) } }
+                    val g = async { runCatching { api.doubanTvWeeklyGlobal(count = 10) } }
+                    val cr = c.await()
+                    val gr = g.await()
+                    // 重新加载（切网途中会短暂连不上）没拿到数据时保留上一次的榜单，
+                    // 不要把首页闪成「暂无数据」；首次加载本来就空，行为和以前一致
+                    cr.getOrNull()?.takeIf { it.isNotEmpty() }?.let { chinese = it }
+                    gr.getOrNull()?.takeIf { it.isNotEmpty() }?.let { global = it }
+                    offline = cr.exceptionOrNull() != null || gr.exceptionOrNull() != null
+                }
+            } catch (_: Exception) {
+                offline = true
+            } finally {
+                loading = false
+                // 豆瓣榜是实时拉的，没有服务端时间戳，「更新」就用本次拉取完成的时间
+                onUpdated(nowStamp())
             }
             failed = chinese.isEmpty() && global.isEmpty()
-        } catch (_: Exception) {
-            failed = true
-        } finally {
-            loading = false
-            // 豆瓣榜是实时拉的，没有服务端时间戳，「更新」就用本次拉取完成的时间
-            onUpdated(nowStamp())
+            if (!failed) break
+            attempt++
+            // 不是网络问题（服务端确实没数据）就别无限重试：试满 3 次就停在提示上
+            if (!offline && attempt >= 3) break
         }
         // 榜单主体先显示，日期逐条补全（并发，失败的条目自动跳过）
         val all = (chinese + global)
@@ -1084,7 +1103,10 @@ private fun TvRankingBoard(
             }
             failed && chinese.isEmpty() && global.isEmpty() ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("榜单暂不可用（服务端豆瓣接口异常）", fontSize = 12.sp, color = TextTertiary)
+                    Text(
+                        if (offline) "连接失败，正在自动重试…" else "榜单暂不可用（服务端豆瓣接口异常）",
+                        fontSize = 12.sp, color = TextTertiary
+                    )
                 }
             else -> Row(Modifier.fillMaxSize()) {
                 RankingColumn(
@@ -1526,39 +1548,62 @@ private fun MaoyanRankingBoard(
     var loading by remember { mutableStateOf(true) }
     // 拿不到数据的原因提示（插件没装/未刷新/平台未开启），空串表示无错误
     var errMsg by remember { mutableStateOf("") }
+    // 上次成功加载的平台段：只有真的「换了平台」才清空旧榜，
+    // 切网重载（平台没变）保留已显示内容 —— 否则断网期间整页会被清成一条错误提示
+    var loadedPlatform by remember { mutableStateOf(-1) }
 
-    // key 用 api.netEpoch + platform：切换网络或切换平台后自动重新加载（见 MpApi.onNetworkChanged）
+    // key 用 api.netEpoch + platform：切换网络或切换平台后自动重新加载（见 MpApi.onNetworkChanged）。
+    // 失败按 retryDelayMs 退避自愈：切网回调到达时新网络常还没真正通，只重载一次会留下一条
+    // 「暂无数据/连接失败」再不自恢复（用户要切到别的榜再切回来）。
     LaunchedEffect(api.netEpoch, platform) {
         val platformType = MAOYAN_PLATFORM_TYPES[platform]
-        loading = true
-        errMsg = ""
-        // 切换平台先清空旧榜：平台榜可能没数据，保留上一家的榜单会误导；
-        // 代价是加载失败不再保留旧数据（改为 errMsg 明确提示）。
-        drama = emptyList()
-        variety = emptyList()
-        try {
-            coroutineScope {
-                // web-all = 剧集热度（电视剧 + 网络剧）；zongyi = 综艺热度；platform 空串 = 全网榜
-                val a = async { runCatching { api.maoyanRank("web-all", 10, platformType) }.getOrDefault(emptyList()) }
-                val b = async { runCatching { api.maoyanRank("zongyi", 10, platformType) }.getOrDefault(emptyList()) }
-                val c = async { runCatching { api.maoyanRankUpdatedAt() }.getOrNull() }
-                a.await().takeIf { it.isNotEmpty() }?.let { drama = it }
-                b.await().takeIf { it.isNotEmpty() }?.let { variety = it }
-                updatedAt = c.await()
+        var attempt = 0
+        while (true) {
+            if (attempt > 0) delay(retryDelayMs(attempt - 1))
+            // 首次才显示「加载中」，静默重试不闪屏
+            loading = attempt == 0
+            errMsg = ""
+            // 切换平台先清空旧榜：平台榜可能没数据，保留上一家的榜单会误导
+            if (loadedPlatform != platform) {
+                drama = emptyList()
+                variety = emptyList()
             }
-            if (drama.isEmpty() && variety.isEmpty()) {
-                errMsg = if (platformType.isEmpty()) {
-                    "猫眼榜单暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
-                } else {
-                    "该平台暂无榜单数据（需在服务端插件配置中开启该平台的推荐开关并刷新一次）"
+            // 本轮是不是「连不上服务器」（与「插件没数据」区分开，提示文案和重试节奏都不同）
+            var offline = false
+            try {
+                coroutineScope {
+                    // web-all = 剧集热度（电视剧 + 网络剧）；zongyi = 综艺热度；platform 空串 = 全网榜
+                    val a = async { runCatching { api.maoyanRank("web-all", 10, platformType) } }
+                    val b = async { runCatching { api.maoyanRank("zongyi", 10, platformType) } }
+                    val c = async { runCatching { api.maoyanRankUpdatedAt() } }
+                    val ar = a.await()
+                    val br = b.await()
+                    ar.getOrNull()?.takeIf { it.isNotEmpty() }?.let { drama = it }
+                    br.getOrNull()?.takeIf { it.isNotEmpty() }?.let { variety = it }
+                    updatedAt = c.await().getOrNull()
+                    offline = ar.exceptionOrNull() != null || br.exceptionOrNull() != null
                 }
+            } catch (_: Exception) {
+                offline = true
+            } finally {
+                loading = false
+                // 猫眼榜用的是插件快照时间，回传给父级显示在页签行 / 标题行
+                onUpdated(updatedAt)
             }
-        } catch (e: Exception) {
-            errMsg = e.message ?: "猫眼榜单加载失败"
-        } finally {
-            loading = false
-            // 猫眼榜用的是插件快照时间，回传给父级显示在页签行 / 标题行
-            onUpdated(updatedAt)
+            if (drama.isNotEmpty() || variety.isNotEmpty()) {
+                loadedPlatform = platform
+                break
+            }
+            errMsg = when {
+                offline -> "连接失败，正在自动重试…"
+                platformType.isEmpty() ->
+                    "猫眼榜单暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+                else ->
+                    "该平台暂无榜单数据（需在服务端插件配置中开启该平台的推荐开关并刷新一次）"
+            }
+            attempt++
+            // 不是网络问题（插件确实没数据）就别无限重试：试满 3 次就停在提示上
+            if (!offline && attempt >= 3) break
         }
         // 榜单主体先显示，首播时间逐条补全（并发，取不到的条目自动跳过、不占位）
         val all = drama + variety
@@ -1719,28 +1764,45 @@ private fun MovieRankingBoard(
     // 拿不到数据的原因提示（插件没装/未刷新），空串表示无错误
     var errMsg by remember { mutableStateOf("") }
 
-    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
+    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）。
+    // 失败后按 retryDelayMs 退避自愈 —— 切网回调到达时新网络常还没真正通，只重载一次会留下错误。
     LaunchedEffect(api.netEpoch) {
-        loading = true
-        errMsg = ""
-        // 重新加载没拿到数据时保留上一次的榜单（同猫眼/豆瓣榜：网络抖动不清空已显示内容）
-        try {
-            coroutineScope {
-                val a = async { runCatching { api.maoyanRank("year", 10) }.getOrDefault(emptyList()) }
-                val b = async { runCatching { api.maoyanRank("global", 10) }.getOrDefault(emptyList()) }
-                val c = async { runCatching { api.maoyanRankUpdatedAt() }.getOrNull() }
-                a.await().takeIf { it.isNotEmpty() }?.let { domestic = it }
-                b.await().takeIf { it.isNotEmpty() }?.let { global = it }
-                updatedAt = c.await()
+        var attempt = 0
+        while (true) {
+            if (attempt > 0) delay(retryDelayMs(attempt - 1))
+            // 首次才显示「加载中」，静默重试不闪屏
+            loading = attempt == 0
+            errMsg = ""
+            // 本轮是不是「连不上服务器」：与「插件没数据」区分开提示
+            var offline = false
+            // 重新加载没拿到数据时保留上一次的榜单（同猫眼/豆瓣榜：网络抖动不清空已显示内容）
+            try {
+                coroutineScope {
+                    val a = async { runCatching { api.maoyanRank("year", 10) } }
+                    val b = async { runCatching { api.maoyanRank("global", 10) } }
+                    val c = async { runCatching { api.maoyanRankUpdatedAt() } }
+                    val ar = a.await()
+                    val br = b.await()
+                    ar.getOrNull()?.takeIf { it.isNotEmpty() }?.let { domestic = it }
+                    br.getOrNull()?.takeIf { it.isNotEmpty() }?.let { global = it }
+                    updatedAt = c.await().getOrNull()
+                    offline = ar.exceptionOrNull() != null || br.exceptionOrNull() != null
+                }
+            } catch (_: Exception) {
+                offline = true
+            } finally {
+                loading = false
+                onUpdated(updatedAt)
             }
-            if (domestic.isEmpty() && global.isEmpty()) {
-                errMsg = "电影票房榜暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+            if (domestic.isNotEmpty() || global.isNotEmpty()) break
+            errMsg = if (offline) {
+                "连接失败，正在自动重试…"
+            } else {
+                "电影票房榜暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
             }
-        } catch (e: Exception) {
-            errMsg = e.message ?: "电影票房榜加载失败"
-        } finally {
-            loading = false
-            onUpdated(updatedAt)
+            attempt++
+            // 不是网络问题（插件确实没数据）就别无限重试：试满 3 次就停在提示上
+            if (!offline && attempt >= 3) break
         }
     }
 

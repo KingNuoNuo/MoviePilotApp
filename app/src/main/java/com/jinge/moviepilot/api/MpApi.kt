@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
@@ -978,6 +979,42 @@ class MpApi(private val store: TokenStore) {
     }
 
     /**
+     * 整理队列快照：`GET /transfer/queue/page`（宿主自带，`verify_token` 即可读）。
+     *
+     * 返回 `{items:[{media:{title,…}, season, tasks:[{fileitem:{name,path,size}, state}]}], total}`
+     * 其中单任务 `state` 取值 `waiting` / `running` / `completed` / `failed`
+     * （宿主 `app/application/transfer/jobs.py` 的状态机）。
+     *
+     * 老宿主没有 `/queue/page` 时退回 `GET /transfer/queue`（同一份数据，不分页、载荷更大）。
+     * 两条都拿不到返回 null —— 调用方据此**不显示**全局进度条，绝不能把「查不到」当成「没有任务」。
+     */
+    suspend fun transferQueue(): OrganizeQueue? {
+        // 优先轻量快照（只带 UI 需要的字段）；失败再退回完整队列
+        val page = runCatching {
+            unwrap(get(baseUrl(), "$apiPrefix/transfer/queue/page", mapOf("page" to "1", "count" to "100")))
+        }.getOrNull()
+        val raw = ((page as? JsonObject)?.get("items") as? JsonArray)?.jsonArray
+            ?: runCatching { unwrap(get(baseUrl(), "$apiPrefix/transfer/queue")) }.getOrNull()?.let {
+                (it as? JsonArray)?.jsonArray
+                    ?: ((it as? JsonObject)?.get("items") as? JsonArray)?.jsonArray
+            }
+            ?: return null
+        var total = 0; var running = 0; var waiting = 0; var failed = 0
+        raw.forEach { group ->
+            val tasks = (group as? JsonObject)?.get("tasks")?.jsonArray ?: return@forEach
+            tasks.forEach { t ->
+                total++
+                when ((t as? JsonObject)?.str("state")) {
+                    "running" -> running++
+                    "waiting" -> waiting++
+                    "failed" -> failed++
+                }
+            }
+        }
+        return OrganizeQueue(total = total, running = running, waiting = waiting, failed = failed)
+    }
+
+    /**
      * 重新整理单条整理记录：POST /history/transfer/{id}/ai-redo。
      *
      * v3 里失败的整理记录带 transfer_task_id 时走「持久任务重试」（不需要智能助手），
@@ -1275,6 +1312,24 @@ fun humanSize(bytes: Long): String = when {
     bytes < 1024L * 1024 -> "${bytes / 1024}KB"
     bytes < 1024L * 1024 * 1024 -> "${bytes / 1024 / 1024}MB"
     else -> "${bytes / 1024 / 1024 / 1024}GB"
+}
+
+/**
+ * 整理队列的进度汇总（全局进度条用，见 [MpApi.transferQueue]）。
+ *
+ * 队列里每个**文件**算一条任务。⚠️ 宿主（v3）在作业内任务全部进入终态时，会由
+ * `JobManager.__pop_job` 把整个作业从队列视图移除，`total` 取的是 `_task_state_changed_at`
+ * 的长度（完成即 pop）——所以 `total` 实际≈`remaining`，**不能当进度分母**。
+ * 进度条的分母由 UI 侧按「本轮峰值」自己记（见 `OrganizeProgressState.peak`）。
+ *
+ * @param total 队列窗口里的任务数（宿主会把完成的任务立刻移出，故约等于 [remaining]）
+ * @param running 正在整理
+ * @param waiting 排队等待
+ * @param failed 整理失败（若仍留在队列里则计入，通常会被移出）
+ */
+data class OrganizeQueue(val total: Int, val running: Int, val waiting: Int, val failed: Int) {
+    /** 还剩几个没处理完（正在整理 + 排队等待）——进度条上直接显示这个数 */
+    val remaining: Int get() = running + waiting
 }
 
 /** TokenStore：SharedPreferences 持久化 */

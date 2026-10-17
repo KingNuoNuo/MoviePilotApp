@@ -23,15 +23,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.jinge.moviepilot.api.MpApi
 import com.jinge.moviepilot.api.long
-import com.jinge.moviepilot.api.posterUrlOf
 import com.jinge.moviepilot.api.str
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -254,7 +253,7 @@ fun SubscribesScreen(api: MpApi, key: Int) {
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(calendar) { group -> CalendarDayCard(group) }
+                        items(calendar) { group -> CalendarDayCard(api, group) }
                     }
                 }
             )
@@ -534,7 +533,7 @@ private fun dateLabel(d: java.time.LocalDate): String {
 
 /** 订阅日历：一天一个卡片，当天所有播出条目横向排列，超出可滑动，两端有指示箭头 */
 @Composable
-private fun CalendarDayCard(group: CalendarGroup) {
+private fun CalendarDayCard(api: MpApi, group: CalendarGroup) {
     Surface(
         color = Color.White,
         shape = RoundedCornerShape(12.dp),
@@ -560,7 +559,7 @@ private fun CalendarDayCard(group: CalendarGroup) {
                     state = listState,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(group.items) { item -> CalendarPosterItem(item) }
+                    items(group.items) { item -> CalendarPosterItem(api, item) }
                 }
 
                 // 右侧：未滑到末尾时显示白色渐隐 + 右箭头，提示可继续右滑
@@ -624,13 +623,15 @@ private fun BoxScope.ScrollArrow(
     }
 }
 
-/** 日历里单个播出条目：竖版海报 + 剧名 + 集数说明 */
+/** 日历里单个播出条目：竖版海报 + 剧名 + 集数说明（海报走 [MpPosterImage]，与下载/搜索共用缓存） */
 @Composable
-private fun CalendarPosterItem(item: CalendarItem) {
+private fun CalendarPosterItem(api: MpApi, item: CalendarItem) {
     Column(Modifier.width(76.dp)) {
-        AsyncImage(
-            model = posterUrlOf(item.poster),
+        MpPosterImage(
+            api = api,
+            raw = item.poster,
             contentDescription = null,
+            contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.7f)
