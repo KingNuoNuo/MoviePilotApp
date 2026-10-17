@@ -9,7 +9,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -162,20 +166,50 @@ class MainActivity : ComponentActivity() {
                     BottomNavBar(selected = tab, onSelect = { tab = it })
                 }
             ) { padding ->
-                Box(Modifier.padding(padding)) {
-                    when (tab) {
-                        0 -> SearchFlow(
+                // 外层 Box 承担 Scaffold 内边距：顶栏/底导航/系统栏的 padding 必须套住
+                // 全部板块 —— 曾把 when(tab) 挪到外面，下载/订阅页签、设置连接信息被顶栏盖住。
+                Box(
+                    Modifier
+                        .padding(padding)
+                        .fillMaxSize()
+                ) {
+                    // 搜索流常驻组合：`when(tab)` 切板块会把 SearchFlow 移出组合、内部
+                    // remember 状态清空，搜索结果随之消失。非搜索板块时折叠为 0 尺寸隐藏，
+                    // 切回时搜索词 / 结果 / 榜单页签原样恢复；登出仍靠 logoutTick 重置。
+                    // ⚠️ 两点：
+                    // 1. 隐藏态下 BackHandler 必须失效（visible=false），否则在其他板块按返回键会被它拦截；
+                    // 2. size(0.dp) 只压测量不裁绘制，必须加 clipToBounds() 真正裁掉；
+                    //    且 size(0) 必须在链首 —— 外层若先 fillMaxSize，内层约束被强制成
+                    //    min=max=全屏，0 会被 coerce 回全屏 → 永远压不小（踩过两次）。
+                    Box(
+                        Modifier.then(
+                            if (tab == 0) Modifier.fillMaxSize()
+                            else Modifier.size(0.dp).clipToBounds()
+                        )
+                    ) {
+                        SearchFlow(
                             api = api,
                             selectedMedia = selectedMedia,
                             directKeyword = directKeyword,
                             onSelectMedia = { selectedMedia = it; directKeyword = null },
                             onDirectSearch = { directKeyword = it; selectedMedia = null },
                             onSelectTab = { tab = it },
+                            visible = tab == 0,
                             showRanking = store.homeTvRanking,
                             showMaoyanRanking = store.homeMaoyanRanking,
+                            showMovieRanking = store.homeMovieRanking,
+                            // 设置页「榜单」卡里调好的页签顺序（排序条拖动）
+                            rankingOrder = store.homeRankingOrder,
+                            // 设置页「搜索」分组的四项偏好（改了回搜索页即生效）
+                            strategy = store.searchSortStrategy,
+                            qualityPref = store.qualityPref,
+                            showDirectSearch = store.showDirectSearch,
+                            showMediaMeta = store.showMediaMeta,
                             onBack = { backToList() },
                             key = logoutTick
                         )
+                    }
+                    when (tab) {
                         1 -> DownloadsScreen(api, appScope, key = logoutTick)
                         2 -> SubscribesScreen(api, key = logoutTick)
                         3 -> SettingsScreen(api, store, onLogout = {

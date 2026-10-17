@@ -28,6 +28,10 @@ val DangerRed = Color(0xFFD24444)        // 危险红（失败、删除、错误
 val SuccessGreen = Color(0xFF2E9E5B)     // 成功绿（已连接、已入库）
 val InfoCyan = Color(0xFF2C7A99)         // 信息青（等待整理标签文字）
 
+// 品牌色（首页榜单切换的平台图标；选中态仍是主色实底 + 白图标，不用这两个色）
+val MaoyanRed = Color(0xFFF03D37)        // 猫眼官方品牌色（石榴红）
+val DoubanGreen = Color(0xFF2D963D)      // 豆瓣官方品牌色
+
 // InboundTag（下载页状态标签）四组前景/背景
 val TagDownloadBg = Color(0xFFE3E5FB)    // 下载中底
 val TagWaitBg = Color(0xFFF0F1F5)        // 等待下载底

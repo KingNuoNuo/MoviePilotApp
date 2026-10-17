@@ -1,6 +1,7 @@
 package com.jinge.moviepilot.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -34,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +53,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -67,11 +71,23 @@ fun SearchFlow(
     onSelectTab: (Int) -> Unit = {},
     showRanking: Boolean = true,
     showMaoyanRanking: Boolean = false,
+    showMovieRanking: Boolean = false,
+    /** 当前是否显示在屏幕上（MainActivity 常驻组合保状态，切走板块时折叠隐藏）；隐藏时返回键不归它管 */
+    visible: Boolean = true,
+    /** 榜单页签顺序（设置页「榜单」卡行序）：`maoyan` 猫眼 / `tv` 豆瓣 / `movie` 电影 */
+    rankingOrder: List<String> = listOf("maoyan", "tv", "movie"),
+    // 以下四项来自设置页「搜索」分组（TokenStore 持久化）
+    strategy: Int = SortStrategy.SMART,
+    qualityPref: Int = QualityPref.ANY,
+    showDirectSearch: Boolean = true,
+    showMediaMeta: Boolean = true,
     onBack: () -> Unit,
     key: Int,
 ) {
     var season by remember(selectedMedia) { mutableStateOf<Int?>(null) }
     var episode by remember(selectedMedia) { mutableStateOf<Int?>(null) }
+    // 未播完的季才有值：该季最新已播集号（资源列表据此把「含最新集」的包置顶 + 推荐）
+    var latestAired by remember(selectedMedia) { mutableStateOf<Int?>(null) }
     var showSeasonDialog by remember(selectedMedia) {
         mutableStateOf(selectedMedia?.isTv() == true)
     }
@@ -81,33 +97,39 @@ fun SearchFlow(
             SeasonEpisodeDialog(
                 api = api,
                 media = selectedMedia,
-                onConfirm = { s, e ->
+                onConfirm = { s, e, latest ->
                     season = s
                     episode = e
+                    latestAired = latest
                     showSeasonDialog = false
                 },
                 onCancel = onBack,
             )
         } else {
-            TorrentListScreen(api, media = selectedMedia, keyword = null, season = season, episode = episode, onSelectTab = onSelectTab, onBack = onBack, key = key)
+            TorrentListScreen(api, media = selectedMedia, keyword = null, season = season, episode = episode, latestAired = latestAired, strategy = strategy, qualityPref = qualityPref, onSelectTab = onSelectTab, onBack = onBack, key = key)
         }
     } else if (directKeyword != null) {
-        TorrentListScreen(api, media = null, keyword = directKeyword, season = null, episode = null, onSelectTab = onSelectTab, onBack = onBack, key = key)
+        TorrentListScreen(api, media = null, keyword = directKeyword, season = null, episode = null, strategy = strategy, qualityPref = qualityPref, onSelectTab = onSelectTab, onBack = onBack, key = key)
     } else {
-        MediaSearchScreen(api, onSelectMedia, onDirectSearch, key, showRanking, showMaoyanRanking)
+        MediaSearchScreen(api, onSelectMedia, onDirectSearch, key, showRanking, showMaoyanRanking, showMovieRanking, visible, rankingOrder, showDirectSearch, showMediaMeta)
     }
 }
 
 /**
  * 选季/选集弹窗（底部弹出的白色圆角卡片风）：
- * 上半部选季（chip，带集数徽标），下半部选集（数字网格，可选「整季」）。
+ * 上半部选季（chip，徽标 = 已播集数/总集数），下半部选集（数字网格，**只列已播出的集**）。
+ *
+ * 选集是**可选项**：没有「整季」这种选项，默认一个都不勾选，不选就代表按整季搜
+ * （服务端与资源列表本来就按季过滤，选集只是进一步缩范围）。正在追的剧只列已播出的集，
+ * 免得列出一堆还没播、搜也搜不到资源的日子。
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SeasonEpisodeDialog(
     api: MpApi,
     media: JsonObject,
-    onConfirm: (Int?, Int?) -> Unit,
+    /** (季号, 集号, 该季最新已播集号或 null) —— 第三个参数只在「未播完」时有值 */
+    onConfirm: (Int?, Int?, Int?) -> Unit,
     onCancel: () -> Unit,
 ) {
     // 媒体搜索结果不带 seasons 字段，必须从服务器拉取
@@ -115,16 +137,20 @@ fun SeasonEpisodeDialog(
     var seasonsLoading by remember { mutableStateOf(false) }
     var seasonsFailed by remember { mutableStateOf(false) }
     var retryTick by remember { mutableStateOf(0) }
-    var seasonEpisodes by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
-    var loading by remember { mutableStateOf(false) }
+    // 季 → 总集数（GET /media/seasons 的 episode_count，含未播集）
+    var totalsBySeason by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
+    // 季 → **可选**的集号：已播出优先，查不到时退化为该季全部集（见 loadEpisodes）
+    var episodesBySeason by remember { mutableStateOf<Map<Int, List<Int>>>(emptyMap()) }
+    var epsFetching by remember { mutableStateOf(false) }
     var selectedSeason by remember { mutableStateOf(seasons.firstOrNull()) }
     var selectedEpisode by remember { mutableStateOf<Int?>(null) }
     var manualSeason by remember { mutableStateOf("1") }
 
     // 拉取季列表（服务器实时调 TMDB，偶发失败返回空 → 自动重试一次，仍失败给手动重试按钮）
-    suspend fun fetchSeasons() {
+    suspend fun fetchSeasons(): List<Int> {
         seasonsLoading = true
         seasonsFailed = false
+        var result: List<Int> = emptyList()
         try {
             var eps = api.mediaSeasonEpisodes(media)
             if (eps.isEmpty()) {
@@ -132,9 +158,10 @@ fun SeasonEpisodeDialog(
                 eps = api.mediaSeasonEpisodes(media)   // 重试一次（首次实时调 TMDB 可能抖动）
             }
             if (eps.isNotEmpty()) {
-                seasonEpisodes = eps
-                seasons = eps.keys.sorted()
-                selectedSeason = selectedSeason ?: seasons.firstOrNull()
+                totalsBySeason = eps
+                result = eps.keys.sorted()
+                seasons = result
+                selectedSeason = selectedSeason ?: result.firstOrNull()
             } else {
                 seasonsFailed = true
             }
@@ -143,21 +170,48 @@ fun SeasonEpisodeDialog(
         } finally {
             seasonsLoading = false
         }
+        return result
+    }
+
+    /**
+     * 预取各季的可选集号（限流 3 并发，别把宿主打满）。
+     *
+     * 只列**已播出**的集：正在追的剧 TMDB 会把未播集一并返回，列出来全是没资源的死选项。
+     * 单季查询失败时**退化为该季全部集**（宁可多列，也别漏掉能下的），所以这里存的是
+     * 「可直接渲染的集号」而不是「纯已播出集号」——调用方不用再区分两种情况。
+     */
+    suspend fun loadEpisodes(targets: List<Int>) {
+        val tmdbId = (media.str("media_id") ?: media.str("tmdb_id"))?.toLongOrNull() ?: return
+        val pending = targets.filter { episodesBySeason[it] == null }
+        if (pending.isEmpty()) return
+        epsFetching = true
+        try {
+            val gate = Semaphore(3)
+            coroutineScope {
+                pending.forEach { s ->
+                    launch {
+                        gate.withPermit {
+                            val aired = runCatching { api.tmdbSeasonAiredEpisodes(tmdbId, s) }.getOrNull()
+                            val total = totalsBySeason[s] ?: 0
+                            val list = aired ?: if (total > 0) (1..total).toList() else null
+                            if (list != null) episodesBySeason = episodesBySeason + (s to list)
+                        }
+                    }
+                }
+            }
+        } finally {
+            epsFetching = false
+        }
     }
 
     LaunchedEffect(retryTick) {
-        if (seasons.isEmpty()) fetchSeasons()
-    }
-
-    // 选中季后查该季集数（拿不到就只按整季搜）
-    LaunchedEffect(selectedSeason) {
-        selectedEpisode = null
-        val s = selectedSeason ?: return@LaunchedEffect
-        if (seasonEpisodes.containsKey(s)) return@LaunchedEffect
-        loading = true
-        val eps = runCatching { api.mediaSeasonEpisodes(media) }.getOrDefault(emptyMap())
-        if (eps.isNotEmpty()) seasonEpisodes = seasonEpisodes + eps
-        loading = false
+        // 季列表 / 总集数任一缺失就重拉（失败时 seasons 可能还留着媒体自带的解析结果）
+        val list = if (seasons.isEmpty() || totalsBySeason.isEmpty()) {
+            fetchSeasons().ifEmpty { seasons }
+        } else {
+            seasons
+        }
+        loadEpisodes(list)
     }
 
     AlertDialog(
@@ -171,8 +225,9 @@ fun SeasonEpisodeDialog(
                     fontSize = 17.sp, fontWeight = FontWeight.Bold, color = TextPrimary
                 )
                 Text(
+                    // 「整季」已从选集里去掉，副标题不再写它 —— 不选集就代表按整季搜
                     if (selectedSeason == null) "搜索全部季的资源"
-                    else "第 $selectedSeason 季" + (selectedEpisode?.let { " · 第 $it 集" } ?: " · 整季"),
+                    else "第 ${selectedSeason} 季" + (selectedEpisode?.let { " · 第 ${it} 集" } ?: ""),
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.primary
                 )
             }
@@ -180,7 +235,15 @@ fun SeasonEpisodeDialog(
         text = {
             Column {
                 // ---- 选季 ----
-                Text("选择季", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextTertiary)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("选择季", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextTertiary)
+                    // 总季数（不含特别篇）贴右显示，不占额外一行
+                    val seasonCount = seasons.count { it >= 1 }
+                    if (seasonCount > 0) {
+                        Spacer(Modifier.weight(1f))
+                        Text("共 ${seasonCount} 季", fontSize = 11.sp, color = TextTertiary)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 when {
                     seasonsLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -201,14 +264,14 @@ fun SeasonEpisodeDialog(
                         SelectChip(
                             text = "全部季",
                             selected = selectedSeason == null,
-                            onClick = { selectedSeason = null }
+                            onClick = { selectedSeason = null; selectedEpisode = null }
                         )
                         seasons.forEach { s ->
                             SelectChip(
                                 text = if (s == 0) "特别篇" else "第 $s 季",
-                                badge = seasonEpisodes[s]?.let { "${it}集" },
+                                badge = seasonBadge(totalsBySeason[s], episodesBySeason[s]),
                                 selected = selectedSeason == s,
-                                onClick = { selectedSeason = s }
+                                onClick = { selectedSeason = s; selectedEpisode = null }
                             )
                         }
                     }
@@ -223,21 +286,25 @@ fun SeasonEpisodeDialog(
                 }
 
                 // ---- 选集 ----
-                val epCount = selectedSeason?.let { seasonEpisodes[it] }
-                if (selectedSeason != null && (loading || epCount != null)) {
+                // 只列已播出的集，且**默认不勾选**：不选集 = 按整季搜，所以它是个可选项。
+                // 再点一次已选中的集即可取消选择（否则「不选」就成了单向操作，取消不掉）。
+                val epList = selectedSeason?.let { episodesBySeason[it] }
+                if (selectedSeason != null && (epsFetching || epList != null)) {
                     Spacer(Modifier.height(14.dp))
-                    Text(
-                        "选择集" + if (loading) "（查询中…）" else "",
-                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextTertiary
-                    )
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("选择集", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextTertiary)
+                        Spacer(Modifier.weight(1f))
+                        Text("可选 · 不选则按整季搜", fontSize = 11.sp, color = TextTertiary)
+                    }
                     Spacer(Modifier.height(8.dp))
-                    if (loading) {
-                        LinearProgressIndicator(
+                    when {
+                        epList == null -> LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth().height(3.dp),
                             trackColor = DividerColor,
                         )
-                    } else if (epCount != null) {
-                        LazyVerticalGrid(
+                        epList.isEmpty() ->
+                            Text("该季暂无已播出剧集", fontSize = 12.sp, color = TextTertiary)
+                        else -> LazyVerticalGrid(
                             columns = GridCells.Adaptive(52.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -245,23 +312,14 @@ fun SeasonEpisodeDialog(
                                 .fillMaxWidth()
                                 .heightIn(max = 220.dp)
                         ) {
-                            item {
-                                SelectChip(
-                                    text = "整季",
-                                    selected = selectedEpisode == null,
-                                    onClick = { selectedEpisode = null }
-                                )
-                            }
-                            items((1..epCount).toList()) { e ->
+                            items(epList) { e ->
                                 SelectChip(
                                     text = "E$e",
                                     selected = selectedEpisode == e,
-                                    onClick = { selectedEpisode = e }
+                                    onClick = { selectedEpisode = if (selectedEpisode == e) null else e }
                                 )
                             }
                         }
-                    } else {
-                        Text("暂无集数信息，按整季搜索", fontSize = 12.sp, color = TextTertiary)
                     }
                 }
             }
@@ -270,7 +328,12 @@ fun SeasonEpisodeDialog(
             Button(
                 onClick = {
                     val s = if (seasons.isNotEmpty()) selectedSeason else manualSeason.toIntOrNull()
-                    onConfirm(s, selectedEpisode)
+                    // 未播完才有值：最大可选集号 < 该季总集数 → 交给资源列表把「含最新集」的包置顶。
+                    // 已播完 / 查不到总集数时给 null，排序退回原行为（整季包优先）。
+                    val eps = s?.let { episodesBySeason[it] }
+                    val total = s?.let { totalsBySeason[it] } ?: 0
+                    val latest = eps?.maxOrNull()?.takeIf { total > 0 && it < total }
+                    onConfirm(s, selectedEpisode, latest)
                 },
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp)
@@ -280,6 +343,22 @@ fun SeasonEpisodeDialog(
             TextButton(onClick = onCancel) { Text("取消") }
         }
     )
+}
+
+/**
+ * 季徽标：已播出集数 / 总集数。
+ *
+ * 只有「没播完」才带总集数（`8/12集`）——全播完时写「12/12集」是废话；
+ * 而且已播集数要异步查（见 [SeasonEpisodeDialog] 的 loadEpisodes），
+ * 让满播季的徽标从头到尾都是「12集」，不会先显示总数再跳成别的样子。
+ *
+ * 传进来的是「可渲染集号」（可能是查不到时退化的全部集），全播完/退化两种情况
+ * 大小都等于总集数，天然得到正确的「12集」。全都没有（还没查到）则不渲染徽标。
+ */
+private fun seasonBadge(total: Int?, episodes: List<Int>?): String? = when {
+    episodes == null -> total?.let { "${it}集" }
+    total == null || episodes.size >= total -> "${episodes.size}集"
+    else -> "${episodes.size}/${total}集"
 }
 
 /** 弹窗用的选中 chip（选中的填主题色，未选中浅灰底） */
@@ -322,6 +401,16 @@ fun MediaSearchScreen(
     key: Int,
     showRanking: Boolean = true,
     showMaoyanRanking: Boolean = false,
+    /** 是否显示「电影票房榜」页签（国内 / 全球年度票房，同样依赖 MaoyanPro 插件快照） */
+    showMovieRanking: Boolean = false,
+    /** 当前是否显示在屏幕上（常驻组合保状态用）；隐藏时返回键拦截必须失效 */
+    visible: Boolean = true,
+    /** 榜单页签顺序（设置页「榜单」卡行序）：`maoyan` 猫眼 / `tv` 豆瓣 / `movie` 电影 */
+    rankingOrder: List<String> = listOf("maoyan", "tv", "movie"),
+    /** 是否显示搜索框右侧「直接搜种子资源」直达按钮（设置页「搜索」可关） */
+    showDirectSearch: Boolean = true,
+    /** 是否按需查媒体详情补「主演 + 当季首播日」（设置页「搜索」可关，关掉省掉逐条详情请求） */
+    showMediaMeta: Boolean = true,
 ) {
     var query by remember(key) { mutableStateOf("") }
     var results by remember(key) { mutableStateOf<List<JsonObject>>(emptyList()) }
@@ -329,11 +418,27 @@ fun MediaSearchScreen(
     var error by remember(key) { mutableStateOf<String?>(null) }
     var searchedText by remember(key) { mutableStateOf("") }
     var searchJob by remember(key) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    // 两个榜单都开启时的胶囊页签：0 = 猫眼榜（居左，默认选中），1 = 豆瓣榜
-    var rankingTab by remember(key) { mutableStateOf(0) }
-    // 两个榜各自的「更新 10-15 19:07」，由榜单加载完成后回传，供页签行 / 标题行显示
+    // 按设置里的顺序排「开启的榜」（id: maoyan 猫眼 / tv 豆瓣 / movie 电影）
+    val enabledBoards = rankingOrder.filter {
+        (it == "maoyan" && showMaoyanRanking) ||
+            (it == "tv" && showRanking) ||
+            (it == "movie" && showMovieRanking)
+    }
+    // 当前选中的榜 id；被关掉/不在序里时回退到第一个开启的
+    var selectedBoard by remember(key) {
+        mutableStateOf(
+            rankingOrder.firstOrNull {
+                (it == "maoyan" && showMaoyanRanking) ||
+                    (it == "tv" && showRanking) ||
+                    (it == "movie" && showMovieRanking)
+            } ?: "maoyan"
+        )
+    }
+    val selectedTab = if (selectedBoard in enabledBoards) selectedBoard else enabledBoards.firstOrNull() ?: "maoyan"
+    // 各榜各自的「更新 10-15 19:07」，由榜单加载完成后回传，供页签行 / 标题行显示
     var maoyanUpdated by remember(key) { mutableStateOf<String?>(null) }
     var doubanUpdated by remember(key) { mutableStateOf<String?>(null) }
+    var movieUpdated by remember(key) { mutableStateOf<String?>(null) }
     // 搜索结果磁贴的补充信息缓存：媒体键 -> 主演 +「当季」首播日
     // （跨滚动保留，来回滚动不重复请求详情）
     val tileCache = remember(key) { mutableStateMapOf<String, MediaTileInfo>() }
@@ -414,18 +519,16 @@ fun MediaSearchScreen(
         )
     }
 
-    // 搜索结果态：物理返回键先回首页，而不是直接退出 app
-    if (!isHome) {
-        androidx.activity.compose.BackHandler { backToHome() }
-    }
+    // 搜索结果态：物理返回键先回首页，而不是直接退出 app（隐藏态下不拦截，让位给其他板块）
+    BackHandler(enabled = visible && !isHome) { backToHome() }
 
     Column(Modifier.fillMaxSize()) {
         if (isHome) {
             // ---- 首页：搜索框 hero 布局；开启榜单时下方接榜单区 ----
-            // 任一榜单开启（豆瓣或猫眼）就不再显示居中的 hero 徽标区，整屏高度让给榜单
-            val anyRanking = showRanking || showMaoyanRanking
-            // 两个榜都开 → 胶囊页签切换，一次只显示一个，榜单区拿满剩余高度
-            val bothRanking = showRanking && showMaoyanRanking
+            // 任一榜单开启（豆瓣或猫眼或电影）就不再显示居中的 hero 徽标区，整屏高度让给榜单
+            val anyRanking = enabledBoards.isNotEmpty()
+            // 两个及以上榜开启 → 胶囊页签切换，一次只显示一个，榜单区拿满剩余高度
+            val multiRanking = enabledBoards.size >= 2
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -475,24 +578,27 @@ fun MediaSearchScreen(
                             .weight(1f)
                             .shadow(8.dp, RoundedCornerShape(28.dp), spotColor = Color(0x265A63D8))
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Box(
-                        Modifier
-                            .size(52.dp)
-                            .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = Color(0x265A63D8))
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White)
-                            .clickable(enabled = query.isNotBlank()) {
-                                if (query.isNotBlank()) onDirectSearch(query.trim())
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.FileDownload,
-                            contentDescription = "直接搜种子资源",
-                            tint = if (query.isNotBlank()) primary else Color(0xFFC3C6D4),
-                            modifier = Modifier.size(22.dp)
-                        )
+                    // 直达按钮可在设置页「搜索」里关掉（有人只用媒体搜索/榜单，不需要这颗按钮占宽）
+                    if (showDirectSearch) {
+                        Spacer(Modifier.width(10.dp))
+                        Box(
+                            Modifier
+                                .size(52.dp)
+                                .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = Color(0x265A63D8))
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White)
+                                .clickable(enabled = query.isNotBlank()) {
+                                    if (query.isNotBlank()) onDirectSearch(query.trim())
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.FileDownload,
+                                contentDescription = "直接搜种子资源",
+                                tint = if (query.isNotBlank()) primary else Color(0xFFC3C6D4),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
                 if (anyRanking) {
@@ -503,48 +609,79 @@ fun MediaSearchScreen(
                             .weight(1f)
                             .padding(horizontal = 16.dp)
                     ) {
-                        if (bothRanking) {
-                            // 页签行：猫眼榜居左（默认）、豆瓣榜居右，右侧显示当前榜的更新时间
+                        if (multiRanking) {
+                            // 切换行：「榜单」标签 + 开启的官方图形图标段（顺序跟设置里的行序），
+                            // 右侧当前榜更新时间
                             RankingTabRow(
-                                selected = rankingTab,
-                                onSelect = { rankingTab = it },
-                                updatedAt = if (rankingTab == 0) maoyanUpdated else doubanUpdated,
+                                boards = enabledBoards,
+                                selected = selectedTab,
+                                onSelect = { selectedBoard = it },
+                                updatedAt = when (selectedTab) {
+                                    "maoyan" -> maoyanUpdated
+                                    "tv" -> doubanUpdated
+                                    else -> movieUpdated
+                                },
                             )
                         } else {
                             // 只开一个榜：没有页签，改用榜单自己的标题行（同样带更新时间）
                             RankingBoardTitle(
-                                title = if (showMaoyanRanking) "猫眼榜单" else "豆瓣电视榜单",
-                                hint = if (showMaoyanRanking) "剧集热度 · 综艺热度" else "国内 · 国外 每周更新",
-                                updatedAt = if (showMaoyanRanking) maoyanUpdated else doubanUpdated,
+                                title = when (selectedTab) {
+                                    "maoyan" -> "猫眼榜单"
+                                    "tv" -> "豆瓣电视榜单"
+                                    else -> "电影票房榜"
+                                },
+                                hint = when (selectedTab) {
+                                    "maoyan" -> "剧集热度 · 综艺热度"
+                                    "tv" -> "国内 · 国外 每周更新"
+                                    else -> "国内 · 全球 年度票房"
+                                },
+                                updatedAt = when (selectedTab) {
+                                    "maoyan" -> maoyanUpdated
+                                    "tv" -> doubanUpdated
+                                    else -> movieUpdated
+                                },
                             )
                         }
                         Spacer(Modifier.height(10.dp))
-                        // 两个榜都常驻组合（数据各拉一次），只把选中那个撑开、另一个压成 0 高：
+                        // 开启的榜都常驻组合（数据各拉一次），只把选中那个撑开、其余压成 0 高：
                         // 切页签不重新请求接口，也不会闪加载动画。
-                        if (showMaoyanRanking) {
+                        if ("maoyan" in enabledBoards) {
                             MaoyanRankingBoard(
                                 api = api,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .then(
-                                        if (!bothRanking || rankingTab == 0) Modifier.weight(1f)
+                                        if (!multiRanking || selectedTab == "maoyan") Modifier.weight(1f)
                                         else Modifier.height(0.dp)
                                     ),
                                 onPickTitle = { doMediaSearch(it) },
                                 onUpdated = { maoyanUpdated = it },
                             )
                         }
-                        if (showRanking) {
+                        if ("tv" in enabledBoards) {
                             TvRankingBoard(
                                 api = api,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .then(
-                                        if (!bothRanking || rankingTab == 1) Modifier.weight(1f)
+                                        if (!multiRanking || selectedTab == "tv") Modifier.weight(1f)
                                         else Modifier.height(0.dp)
                                     ),
                                 onPickTitle = { doMediaSearch(it) },
                                 onUpdated = { doubanUpdated = it },
+                            )
+                        }
+                        if ("movie" in enabledBoards) {
+                            MovieRankingBoard(
+                                api = api,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (!multiRanking || selectedTab == "movie") Modifier.weight(1f)
+                                        else Modifier.height(0.dp)
+                                    ),
+                                onPickTitle = { doMediaSearch(it) },
+                                onUpdated = { movieUpdated = it },
                             )
                         }
                     }
@@ -576,7 +713,7 @@ fun MediaSearchScreen(
                     modifier = Modifier.fillMaxSize().weight(1f)
                 ) {
                     items(results) { media ->
-                        MediaCard(api, media, tileCache) { onSelectMedia(media) }
+                        MediaCard(api, media, tileCache, enableMeta = showMediaMeta) { onSelectMedia(media) }
                     }
                 }
             }
@@ -589,6 +726,8 @@ private fun MediaCard(
     api: MpApi,
     media: JsonObject,
     tileCache: MutableMap<String, MediaTileInfo>,
+    /** 关掉后不查详情、不显示主演与首播日（只剩类型行），省掉逐条详情请求 */
+    enableMeta: Boolean = true,
     onClick: () -> Unit,
 ) {
     // 首播时间：搜索结果自带的 first_air_date 是**整剧第一季**的日期，多季剧集（如「现在就出发」
@@ -600,8 +739,8 @@ private fun MediaCard(
     val mid = media.str("media_id")
     val cacheKey = "${media.str("media_source") ?: "themoviedb"}:$mid"
     val cached = tileCache[cacheKey]
-    LaunchedEffect(cacheKey) {
-        if (cached == null && !mid.isNullOrBlank()) {
+    LaunchedEffect(cacheKey, enableMeta) {
+        if (enableMeta && cached == null && !mid.isNullOrBlank()) {
             // 失败/无数据也写入空结果缓存，避免每次滚回来都重发请求
             tileCache[cacheKey] = api.mediaTileInfo(
                 mediaSource = media.str("media_source") ?: "themoviedb",
@@ -664,12 +803,12 @@ private fun MediaCard(
             }
             // 下半区：1dp 分隔线把「编排信息（类型/首播/主演）」与剧情简介分开
             // 「类型 · 首播」合成一行（不带年份，用户要求去掉）
-            val premiere = cached?.seasonDate ?: fallbackPremiere
+            val premiere = if (enableMeta) cached?.seasonDate ?: fallbackPremiere else null
             val metaLine = listOfNotNull(
                 media.str("type")?.takeIf { it.isNotBlank() },
                 premiere?.let { "首播 $it" },
             ).joinToString(" · ")
-            val actors = cached?.actors?.takeIf { it.isNotEmpty() }
+            val actors = if (enableMeta) cached?.actors?.takeIf { it.isNotEmpty() } else null
             if (metaLine.isNotBlank() || actors != null) {
                 Spacer(Modifier.height(6.dp))
                 Box(Modifier.fillMaxWidth().height(1.dp).background(DividerColor))
@@ -704,23 +843,131 @@ private fun nowStamp(): String =
     java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
         .format(java.util.Date())
 
+/** 榜单切换图标尺寸：猫眼图形自带的圆盘外径 = 21.56/24 格，即这个尺寸就是圆盘直径 */
+private val BrandIconSize = 18.dp
+/** 豆瓣满格方图形相对猫眼圆盘的内缩比（配平用，见 [RankingBrandTab]） */
+private const val SquareIconFit = 0.9f
+
 /**
- * 双榜并存时的胶囊页签行：猫眼榜居左（默认选中）、豆瓣榜居右，右侧显示当前选中榜的更新时间。
- * 只渲染页签本身，选中项决定下方哪个榜被撑开。
+ * 双榜（或多榜）并存时的切换行：白胶囊容器 =「榜单」标签 + 1dp 竖分隔线 + 各榜品牌图标段，
+ * 右侧是当前榜的更新时间。
+ *
+ * - 「榜单」是**纯标签**（11sp 灰字、不加点击反馈），并入胶囊后与图标共享同一容器边界，不再孤立；
+ * - 猫眼/豆瓣为官方单色图形：选中段主色实底 + 白图标，未选中填各自品牌色（红圆 / 绿方）；
+ * - 电影榜是自设计多色渐变图形（[BrandVideoIcons.Movie]，无法反白/tint 染色）：
+ *   选中 = #E8EAFB 浅紫底 + 原色图标，未选中 = 透明底 + 原色（与猫眼平台行的多色段同语言）；
+ * - 段与段之间只换实底，切换动效天然（与 [PillTab] 的语言同源）。
+ *
+ * 只渲染切换行本身，选中项决定下方哪个榜被撑开；只画开启了的段，段序 = [boards] 列表序
+ * （设置页「榜单」卡行序）。
  */
 @Composable
 private fun RankingTabRow(
-    selected: Int,
-    onSelect: (Int) -> Unit,
+    boards: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
     updatedAt: String?,
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        PillTab("猫眼榜", selected == 0) { onSelect(0) }
-        Spacer(Modifier.width(8.dp))
-        PillTab("豆瓣榜", selected == 1) { onSelect(1) }
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.White)
+                .border(1.dp, DividerColor, RoundedCornerShape(14.dp))
+                .padding(3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "榜单",
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                color = TextTertiary,
+                modifier = Modifier.padding(start = 6.dp, end = 6.dp)
+            )
+            Box(Modifier.width(1.dp).height(16.dp).background(DividerColor))
+            Spacer(Modifier.width(6.dp))
+            boards.forEachIndexed { index, id ->
+                if (index > 0) Spacer(Modifier.width(3.dp))
+                when (id) {
+                    "maoyan" -> RankingBrandTab(
+                        label = "猫眼榜",
+                        icon = BrandIcons.Maoyan,
+                        brandColor = MaoyanRed,
+                        selected = selected == "maoyan",
+                    ) { onSelect("maoyan") }
+                    "tv" -> RankingBrandTab(
+                        label = "豆瓣榜",
+                        icon = BrandIcons.Douban,
+                        brandColor = DoubanGreen,
+                        selected = selected == "tv",
+                        squareIcon = true,
+                    ) { onSelect("tv") }
+                    "movie" -> RankingBrandTab(
+                        label = "电影榜",
+                        icon = BrandVideoIcons.Movie,
+                        brandColor = Color.Unspecified,
+                        selected = selected == "movie",
+                        squareIcon = true,
+                        colorful = true,
+                    ) { onSelect("movie") }
+                }
+            }
+        }
         Spacer(Modifier.weight(1f))
         shortStamp(updatedAt)?.let {
             Text("更新 $it", fontSize = 10.sp, color = Color(0xFFA6AABE))
+        }
+    }
+}
+
+/**
+ * 榜单切换的单个品牌段（42×28dp）。
+ *
+ * - 单色图形（默认）：选中主色实底 + 白图标，未选中透明底 + 品牌色图标；
+ * - [colorful] 多色渐变图形（电影榜）：无法反白也不能被 tint 染色，选中 = #E8EAFB 浅紫底 +
+ *   原色图标（tint = Unspecified 保留原色），未选中 = 透明底 + 原色 —— 与猫眼平台行同语言。
+ *
+ * [squareIcon] 给「满格方形」图形（豆瓣/电影）用：猫眼图形自带圆形留白、外径只占 21.56/24 格，
+ * 而满格方是铺满整格的方，两者同尺寸并排会让方块明显大于圆盘；缩到
+ * [SquareIconFit] 后外接尺寸一致（配平）。豆瓣官方是纯直角方，缩到 18dp 会显沉，
+ * 按图形自身比例（5/24）裁圆角。
+ */
+@Composable
+private fun RankingBrandTab(
+    label: String,
+    icon: ImageVector,
+    brandColor: Color,
+    selected: Boolean,
+    squareIcon: Boolean = false,
+    colorful: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(width = 42.dp, height = 28.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(
+                when {
+                    !selected -> Color.Transparent
+                    colorful -> Color(0xFFE8EAFB)
+                    else -> MaterialTheme.colorScheme.primary
+                }
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        val tint = when {
+            colorful -> Color.Unspecified
+            selected -> Color.White
+            else -> brandColor
+        }
+        if (squareIcon) {
+            val side = BrandIconSize * SquareIconFit
+            Box(Modifier.size(side).clip(RoundedCornerShape(side * (5f / 24f)))) {
+                Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.fillMaxSize())
+            }
+        } else {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(BrandIconSize))
         }
     }
 }
@@ -1018,10 +1265,12 @@ private fun RankItemCard(
     firstAirDate: String?,
     premiereDate: String? = null,
     platform: String? = null,
+    /** 渲染用标题（全球票房榜的英文原名优先显示识别出的中文名）；点击回搜仍用原始 title */
+    displayTitle: String? = null,
     onClick: () -> Unit,
 ) {
     // 显示用标题做「季号压成 S+数字」处理并摘出季号；点击回搜仍用原始 title（见 [rankTitleParts] 说明）
-    val (title, season) = rankTitleParts(item.str("title") ?: "未知")
+    val (title, season) = rankTitleParts(displayTitle ?: item.str("title") ?: "未知")
     Row(
         Modifier
             .fillMaxWidth()
@@ -1172,13 +1421,93 @@ private fun RankItemCard(
 }
 
 /**
- * 首页猫眼榜单：左右两列（左 = 剧集热度：电视剧 + 网络剧；右 = 综艺热度）。
+ * 猫眼平台细分榜的 platformType（猫眼接口参数，下标与平台切换行一致）：
+ * 空串 = 全网；`3` 腾讯视频、`2` 爱奇艺、`7` 芒果TV、`1` 优酷。
+ */
+private val MAOYAN_PLATFORM_TYPES = listOf("", "3", "2", "7", "1")
+
+/**
+ * 猫眼榜单平台切换行：白胶囊容器与上方「榜单｜猫眼｜豆瓣」切换行完全同构 ——
+ * 「平台」标签（11sp 灰字、纯标签无点击反馈）+ 1dp 竖分隔线 + 5 个 42×28 图标段。
+ *
+ * - 全网是自设计单色地球（[BrandVideoIcons.AllNet]）：选中 = 主色实底 + 白描线，
+ *   未选中 = 透明底 + 主色描线 —— 与猫眼/豆瓣页签的选中语言完全一致；
+ * - 四家品牌图形是多色（渐变/多 path），无法反白也不能被 tint 染色：
+ *   选中 = #E8EAFB 浅紫底 + 原色图标（tint = Unspecified 保留原色），未选中透明底 + 原色。
+ *   整行只有一段带底色，一眼可辨当前平台。
+ */
+@Composable
+private fun MaoyanPlatformRow(selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .border(1.dp, DividerColor, RoundedCornerShape(14.dp))
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "平台",
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            color = TextTertiary,
+            modifier = Modifier.padding(start = 6.dp, end = 6.dp)
+        )
+        Box(Modifier.width(1.dp).height(16.dp).background(DividerColor))
+        Spacer(Modifier.width(6.dp))
+        // Triple: (无障碍描述, 图标, 是否单色图形)
+        val platforms = listOf(
+            Triple("全网", BrandVideoIcons.AllNet, true),
+            Triple("腾讯视频", BrandVideoIcons.TencentVideo, false),
+            Triple("爱奇艺", BrandVideoIcons.Iqiyi, false),
+            Triple("芒果TV", BrandVideoIcons.Mgtv, false),
+            Triple("优酷", BrandVideoIcons.Youku, false),
+        )
+        platforms.forEachIndexed { index, (label, icon, mono) ->
+            if (index > 0) Spacer(Modifier.width(3.dp))
+            Box(
+                Modifier
+                    .size(width = 42.dp, height = 28.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(
+                        when {
+                            selected != index -> Color.Transparent
+                            mono -> MaterialTheme.colorScheme.primary
+                            else -> Color(0xFFE8EAFB)
+                        }
+                    )
+                    .clickable { onSelect(index) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (mono) {
+                    Icon(
+                        icon,
+                        contentDescription = label,
+                        tint = if (selected == index) Color.White else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else {
+                    Icon(
+                        icon,
+                        contentDescription = label,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 首页猫眼榜单：平台切换行（全网｜腾讯视频｜爱奇艺｜芒果TV｜优酷）+ 左右两列
+ * （左 = 剧集热度：电视剧 + 网络剧；右 = 综艺热度）。
  *
  * 数据来源是服务端自建插件「猫眼榜单」（MaoyanPro）：猫眼热度接口有美团 H5guard 反爬，
  * App 直连一律 403，只能复用服务端无头浏览器抓到的榜单快照。
- * 插件对外接口 `GET /plugin/MaoyanPro/rank?board_type=web-all|zongyi` 走宿主默认的
- * API 令牌鉴权（X-API-KEY），因此 App 的令牌模式即可读取，不再需要账号密码登录态。
- * 标题行由调用方渲染（单榜=榜单标题 / 双榜=胶囊页签），这里只出列头 + 两列列表。
+ * 插件对外接口 `GET /plugin/MaoyanPro/rank?board_type=web-all|zongyi&platform=<platformType>`
+ * 走宿主默认的 API 令牌鉴权（X-API-KEY），因此 App 的令牌模式即可读取，不再需要账号密码登录态。
+ * 标题行由调用方渲染（单榜=榜单标题 / 双榜=胶囊页签），这里出平台切换行 + 列头 + 两列列表。
  */
 @Composable
 private fun MaoyanRankingBoard(
@@ -1190,28 +1519,39 @@ private fun MaoyanRankingBoard(
     var drama by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var variety by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     var updatedAt by remember { mutableStateOf<String?>(null) }
+    // 当前选中的平台段（0=全网 1=腾讯视频 2=爱奇艺 3=芒果TV 4=优酷），默认全网
+    var platform by remember { mutableStateOf(0) }
     // media_id -> 首播日期（yyyy-MM-dd）；猫眼榜单接口不返回日期，异步按条补全
     var dates by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember { mutableStateOf(true) }
-    // 拿不到数据的原因提示（插件没装/未刷新），空串表示无错误
+    // 拿不到数据的原因提示（插件没装/未刷新/平台未开启），空串表示无错误
     var errMsg by remember { mutableStateOf("") }
 
-    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
-    LaunchedEffect(api.netEpoch) {
-        loading = true; errMsg = ""
+    // key 用 api.netEpoch + platform：切换网络或切换平台后自动重新加载（见 MpApi.onNetworkChanged）
+    LaunchedEffect(api.netEpoch, platform) {
+        val platformType = MAOYAN_PLATFORM_TYPES[platform]
+        loading = true
+        errMsg = ""
+        // 切换平台先清空旧榜：平台榜可能没数据，保留上一家的榜单会误导；
+        // 代价是加载失败不再保留旧数据（改为 errMsg 明确提示）。
+        drama = emptyList()
+        variety = emptyList()
         try {
             coroutineScope {
-                // web-all = 猫眼的「电视剧 + 网络剧」综合热度榜；zongyi = 综艺热度单榜
-                val a = async { runCatching { api.maoyanRank("web-all", 10) }.getOrDefault(emptyList()) }
-                val b = async { runCatching { api.maoyanRank("zongyi", 10) }.getOrDefault(emptyList()) }
+                // web-all = 剧集热度（电视剧 + 网络剧）；zongyi = 综艺热度；platform 空串 = 全网榜
+                val a = async { runCatching { api.maoyanRank("web-all", 10, platformType) }.getOrDefault(emptyList()) }
+                val b = async { runCatching { api.maoyanRank("zongyi", 10, platformType) }.getOrDefault(emptyList()) }
                 val c = async { runCatching { api.maoyanRankUpdatedAt() }.getOrNull() }
-                // 重新加载没拿到数据时保留上一次的榜单（同豆瓣榜，见 TvRankingBoard）
                 a.await().takeIf { it.isNotEmpty() }?.let { drama = it }
                 b.await().takeIf { it.isNotEmpty() }?.let { variety = it }
                 updatedAt = c.await()
             }
             if (drama.isEmpty() && variety.isEmpty()) {
-                errMsg = "猫眼榜单暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+                errMsg = if (platformType.isEmpty()) {
+                    "猫眼榜单暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+                } else {
+                    "该平台暂无榜单数据（需在服务端插件配置中开启该平台的推荐开关并刷新一次）"
+                }
             }
         } catch (e: Exception) {
             errMsg = e.message ?: "猫眼榜单加载失败"
@@ -1250,6 +1590,12 @@ private fun MaoyanRankingBoard(
     }
 
     Column(modifier) {
+        // 平台切换行：全网（原有榜单）+ 四家平台细分榜
+        MaoyanPlatformRow(
+            selected = platform,
+            onSelect = { platform = it },
+        )
+        Spacer(Modifier.height(10.dp))
         // 列头行：两列等宽，与下方列表严格对齐（榜单标题由调用方渲染）
         Row(Modifier.fillMaxWidth()) {
             Text(
@@ -1337,6 +1683,160 @@ private fun MaoyanColumn(
                             platform = platform ?: relInfo,
                             onClick = {
                                 val t = item.str("title")
+                                if (!t.isNullOrBlank()) onPickTitle(t)
+                            },
+                        )
+                    }
+                }
+                ScrollMoreHint(
+                    visible = listState.canScrollForward,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 首页电影票房榜：左右两列（左 = 国内年度票房 / `board_type=year`；右 = 全球年度票房 / `global`）。
+ *
+ * 数据同样来自 MaoyanPro 插件快照（猫眼年度票房榜 + boxofficemojo 全球榜），接口条目自带
+ * `box_office`（如「44.21亿」/「25.14亿美元」）与 `releaseInfo`（如「2026-02-17 上映」），
+ * 无需逐条异步补日期。全球榜原名是英文，渲染与回搜都优先用插件识别出的中文名 `title_cn`。
+ * 列头行由本组件渲染（与猫眼/豆瓣榜同款列头），页签行 / 标题行由调用方渲染。
+ */
+@Composable
+private fun MovieRankingBoard(
+    api: MpApi,
+    modifier: Modifier = Modifier,
+    onPickTitle: (String) -> Unit,
+    onUpdated: (String?) -> Unit = {},
+) {
+    var domestic by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var global by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var updatedAt by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    // 拿不到数据的原因提示（插件没装/未刷新），空串表示无错误
+    var errMsg by remember { mutableStateOf("") }
+
+    // key 用 api.netEpoch：切换网络后自动重新加载（见 MpApi.onNetworkChanged）
+    LaunchedEffect(api.netEpoch) {
+        loading = true
+        errMsg = ""
+        // 重新加载没拿到数据时保留上一次的榜单（同猫眼/豆瓣榜：网络抖动不清空已显示内容）
+        try {
+            coroutineScope {
+                val a = async { runCatching { api.maoyanRank("year", 10) }.getOrDefault(emptyList()) }
+                val b = async { runCatching { api.maoyanRank("global", 10) }.getOrDefault(emptyList()) }
+                val c = async { runCatching { api.maoyanRankUpdatedAt() }.getOrNull() }
+                a.await().takeIf { it.isNotEmpty() }?.let { domestic = it }
+                b.await().takeIf { it.isNotEmpty() }?.let { global = it }
+                updatedAt = c.await()
+            }
+            if (domestic.isEmpty() && global.isEmpty()) {
+                errMsg = "电影票房榜暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+            }
+        } catch (e: Exception) {
+            errMsg = e.message ?: "电影票房榜加载失败"
+        } finally {
+            loading = false
+            onUpdated(updatedAt)
+        }
+    }
+
+    Column(modifier) {
+        // 列头行：两列等宽，与下方列表严格对齐
+        Row(Modifier.fillMaxWidth()) {
+            Text(
+                "国内年度票房",
+                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "全球年度票房",
+                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("榜单加载中…", fontSize = 12.sp, color = TextTertiary)
+            }
+            errMsg.isNotEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    errMsg,
+                    fontSize = 12.sp, color = TextTertiary,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+            }
+            else -> Row(Modifier.fillMaxSize()) {
+                MovieColumn(
+                    api = api,
+                    items = domestic,
+                    modifier = Modifier.weight(1f),
+                    onPickTitle = onPickTitle,
+                )
+                Spacer(Modifier.width(12.dp))
+                MovieColumn(
+                    api = api,
+                    items = global,
+                    modifier = Modifier.weight(1f),
+                    onPickTitle = onPickTitle,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 电影票房榜单列：纵向条目，复用榜单同款小卡 —— 第二行票房（`box_office`，如「44.21亿」），
+ * 第三行上映信息（`releaseInfo`，日期压成紧凑写法）；全球榜条目优先用识别出的中文名显示与回搜。
+ */
+@Composable
+private fun MovieColumn(
+    api: MpApi,
+    items: List<JsonObject>,
+    modifier: Modifier = Modifier,
+    onPickTitle: (String) -> Unit,
+) {
+    Column(modifier) {
+        if (items.isEmpty()) {
+            Text("暂无数据", fontSize = 11.sp, color = Color(0xFFA6AABE))
+        } else {
+            val listState = rememberLazyListState()
+            Box(Modifier.weight(1f)) {
+                LazyColumn(
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    // 同 MaoyanColumn：给底部滚动提示留出高度，避免压住末条卡片
+                    contentPadding = PaddingValues(bottom = 28.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    itemsIndexed(items) { index, item ->
+                        // 上映信息压成「2026.2.17 上映」这类紧凑写法（日期前缀套 formatAirDate）；
+                        // 全球榜只有年份（「2026」）时原样显示
+                        val relInfo = item.str("release_info")?.takeIf { it.isNotBlank() }
+                        val airDate = relInfo?.let { rel ->
+                            val m = Regex("^(\\d{4}-\\d{1,2}-\\d{1,2})").find(rel)
+                            if (m != null) formatAirDate(m.groupValues[1]) + rel.substring(m.groupValues[1].length) else rel
+                        }
+                        // 全球榜原名是英文：显示与回搜都优先用插件识别出的中文名
+                        val titleCn = item.str("title_cn")?.takeIf { it.isNotBlank() }
+                        RankItemCard(
+                            api = api,
+                            rank = item.long("rank")?.toInt() ?: (index + 1),
+                            item = item,
+                            firstAirDate = airDate,
+                            // 票房走平台位（第二行）：复用平台行的加重灰字样式，语义都是「这条的关键属性」
+                            platform = item.str("box_office")?.takeIf { it.isNotBlank() },
+                            displayTitle = titleCn,
+                            onClick = {
+                                val t = titleCn ?: item.str("title")
                                 if (!t.isNullOrBlank()) onPickTitle(t)
                             },
                         )

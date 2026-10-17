@@ -39,9 +39,15 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** 订阅页五个页签的顺序（电影 / 电视剧 / 音乐 / 工作流 / 日历） */
-private enum class SubscribeTab(val label: String) {
-    Movie("电影"), Tv("电视剧"), Music("音乐"), Workflow("工作流"), Calendar("日历")
+/**
+ * 订阅页五个页签的顺序（电影 / 电视 / 音乐 / 工作流 / 日历）。
+ *
+ * [label] 是**页签文案**，[type] 是**宿主订阅数据里的 type 字段**，两者不能混用：
+ * 页签要短（写「电视」），而宿主返回的是「电视剧」，拿文案当过滤条件会一条都筛不出来。
+ */
+private enum class SubscribeTab(val label: String, val type: String? = null) {
+    Movie("电影", "电影"), Tv("电视", "电视剧"), Music("音乐", "音乐"),
+    Workflow("工作流"), Calendar("日历")
 }
 
 /** 我的订阅：电影/电视剧/音乐（订阅查看+删除）、工作流（执行/启停）、日历（订阅未来一周播出） */
@@ -104,7 +110,8 @@ fun SubscribesScreen(api: MpApi, key: Int) {
                 loading = subsLoading,
                 error = subsError,
                 emptyHint = "还没有${tab.label}订阅，去搜索页添加吧",
-                items = subs.filter { subType(it) == tab.label },
+                // 按宿主 type 过滤（不是页签文案：页签写「电视」，宿主字段是「电视剧」）
+                items = subs.filter { subType(it) == tab.type },
                 content = { list ->
                     LazyColumn(
                         contentPadding = PaddingValues(16.dp),

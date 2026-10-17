@@ -490,14 +490,19 @@ class MpApi(private val store: TokenStore) {
      * @param boardType 榜单类型：`web-all` 剧集热度（电视剧+网络剧）、`zongyi` 综艺热度、
      *                  `movie` 电影票房、`web-movie` 网络电影
      * @param limit 每个榜单最多返回的条目数
+     * @param platform 猫眼 platformType 平台细分：空串 = 只取全网榜（快照里平台细分榜与全网榜
+     *                 同 type，不传会一起返回导致解析错位）；`3`=腾讯视频 `2`=爱奇艺
+     *                 `7`=芒果TV `1`=优酷。null = 不筛选（返回快照里该 type 的全部榜单）
      * @return 榜单条目（含 rank/title/platform/release_info/poster/media_source/media_id）
      */
-    suspend fun maoyanRank(boardType: String, limit: Int = 10): List<JsonObject> {
+    suspend fun maoyanRank(boardType: String, limit: Int = 10, platform: String? = null): List<JsonObject> {
+        val params = linkedMapOf<String, String?>(
+            "board_type" to boardType,
+            "limit" to limit.toString(),
+        )
+        if (platform != null) params["platform"] = platform
         val data = unwrap(
-            get(
-                baseUrl(), "$apiPrefix/plugin/MaoyanPro/rank",
-                mapOf("board_type" to boardType, "limit" to limit.toString())
-            )
+            get(baseUrl(), "$apiPrefix/plugin/MaoyanPro/rank", params)
         )
         val obj = data as? JsonObject ?: return emptyList()
         val boards = obj["boards"]?.jsonArray ?: return emptyList()
@@ -790,6 +795,42 @@ class MpApi(private val store: TokenStore) {
         val data = unwrap(get(baseUrl(), "$apiPrefix/tmdb/$tmdbId/$season"))
         val arr = (data as? kotlinx.serialization.json.JsonArray)?.jsonArray ?: return emptyList()
         return arr.mapNotNull { it as? JsonObject }
+    }
+
+    /**
+     * 某季**已播出**的集号列表（用每集 air_date 与今天比较，升序）。
+     *
+     * 为什么要自己算：TMDB 的 `episode_count`（/media/seasons 返回的那个）是**整季集数**，
+     * 把还没播的集也算进去了 —— 正在追的剧会列出十几个没有资源的「死选项」。
+     *
+     * 每集 air_date 有三种状态，实测 TMDB（以「玉簟秋」S1 为例，今天 2026-10-16）：
+     * - 有日期且 ≤ 今天 → **已播出**，列入（E1–E12）；
+     * - 有日期但在将来 → **未播出**，排除（E13/E14 是 10-17 / 10-18）；
+     * - **日期为空**（尚未定档）→ **未播出**，排除（E15–E40 全是空日期）。
+     *
+     * ⚠️ 早期版本把「空日期」当已播出（怕藏掉能下的），结果「玉簟秋」26 个未定档集
+     * 被算成已播 → 徽标显示 38/40，而实际只播了 12 集。
+     *
+     * @return 已播出的集号；**查不到时返回 null**（接口异常 / 整季一集都没带 air_date，
+     *         此时无从判断，调用方必须退化为「显示全部集」，绝不能把能下的集藏起来）。
+     *         确实一集都没播（全在将来）时返回空列表。
+     */
+    suspend fun tmdbSeasonAiredEpisodes(tmdbId: Long, season: Int): List<Int>? {
+        val rows = runCatching { tmdbSeasonEpisodes(tmdbId, season) }.getOrNull() ?: return null
+        if (rows.isEmpty()) return null
+        val today = java.time.LocalDate.now()
+        val dated = rows.mapNotNull { o ->
+            val n = o.long("episode_number")?.toInt() ?: return@mapNotNull null
+            val d = o.str("air_date")?.take(10)
+                ?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+            n to d
+        }
+        if (dated.isEmpty()) return null
+        // 整季一集日期都没给 → 数据源不提供日期，无从判断 → 交给调用方退化（宁可全列，不可藏）
+        if (dated.all { it.second == null }) return null
+        // 只有「有日期且不晚于今天」才算已播出；空日期 = 未定档 = 未播出
+        return dated.filter { (_, d) -> d != null && !d.isAfter(today) }
+            .map { it.first }.filter { it > 0 }.distinct().sorted()
     }
 
     /** 剧集各季集数 {季号: 集数}；解析失败返回空 Map（接口 GET /media/seasons） */
@@ -1254,6 +1295,59 @@ class TokenStore(private val prefs: android.content.SharedPreferences) {
         get() = prefs.getBoolean("home_maoyan_ranking", false)
         set(v) { prefs.edit().putBoolean("home_maoyan_ranking", v).apply() }
 
+    /** 首页电影票房榜开关（默认关：同猫眼，数据也来自 MaoyanPro 插件）。属 UI 偏好，退出登录时保留 */
+    var homeMovieRanking: Boolean
+        get() = prefs.getBoolean("home_movie_ranking", false)
+        set(v) { prefs.edit().putBoolean("home_movie_ranking", v).apply() }
+
+    /**
+     * 首页榜单的页签顺序（设置页「榜单」卡行序，行尾 ↑ 可上移调整）。
+     * 取值为逗号分隔的榜单 id（`maoyan` 猫眼 / `tv` 豆瓣 / `movie` 电影）；未存储或存缺时
+     * 按「猫眼、豆瓣、电影」兜底补齐（保持历史顺序）。属 UI 偏好，退出登录时保留。
+     */
+    var homeRankingOrder: List<String>
+        get() {
+            val all = listOf("maoyan", "tv", "movie")
+            val saved = prefs.getString("home_ranking_order", null)
+                ?.split(',')?.map { it.trim() }?.filter { it in all }?.distinct().orEmpty()
+            return saved + all.filter { it !in saved }
+        }
+        set(v) { prefs.edit().putString("home_ranking_order", v.joinToString(",")).apply() }
+
+    /**
+     * 资源列表的推荐策略（设置页「搜索 › 结果推荐策略」），取值为 `SortStrategy.*`。
+     * 默认 0 = 智能推荐（= 改动前的老行为），老用户升级后无感。属 UI 偏好，退出登录时保留。
+     */
+    var searchSortStrategy: Int
+        get() = prefs.getInt("search_sort_strategy", 0)
+        set(v) { prefs.edit().putInt("search_sort_strategy", v).apply() }
+
+    /**
+     * 画质偏好（设置页「搜索 › 画质偏好」），取值为 `QualityPref.*`：0 不限 / 1 4K / 2 1080P。
+     *
+     * 这是与排序策略**正交的全局项**：策略回答「怎么排」，它回答「要哪种」。
+     * 只把所选画质档的资源置顶、**不过滤**——某部剧没有 4K 资源时列表不能变空。
+     * 默认 0 = 不限（不参与比较，等于老行为）。属 UI 偏好，退出登录时保留。
+     */
+    var qualityPref: Int
+        get() = prefs.getInt("quality_pref", 0)
+        set(v) { prefs.edit().putInt("quality_pref", v).apply() }
+
+    /** 搜索框右侧「直接搜种子资源」直达按钮是否显示（默认显示）。属 UI 偏好，退出登录时保留 */
+    var showDirectSearch: Boolean
+        get() = prefs.getBoolean("show_direct_search", true)
+        set(v) { prefs.edit().putBoolean("show_direct_search", v).apply() }
+
+    /** 搜索结果卡是否异步补「主演 + 当季首播日」（默认补）。关掉可省下逐条的详情请求。属 UI 偏好，退出登录时保留 */
+    var showMediaMeta: Boolean
+        get() = prefs.getBoolean("show_media_meta", true)
+        set(v) { prefs.edit().putBoolean("show_media_meta", v).apply() }
+
+    /** 进入设置页时自动检测一次软件更新（默认开）。关掉后只剩手动「检查更新」。属 UI 偏好，退出登录时保留 */
+    var autoCheckUpdate: Boolean
+        get() = prefs.getBoolean("auto_check_update", true)
+        set(v) { prefs.edit().putBoolean("auto_check_update", v).apply() }
+
     /** 账号密码登录成功。api_token 是旧版 API 令牌模式的残留，顺手清掉 */
     fun save(base: String, token: String, prefix: String) {
         prefs.edit()
@@ -1270,13 +1364,27 @@ class TokenStore(private val prefs: android.content.SharedPreferences) {
     }
 
     fun clear() {
-        // 首页榜单开关是 UI 偏好，退出登录不清，重登后保持用户选择
-        val keepRanking = prefs.getBoolean("home_tv_ranking", true)
-        val keepMaoyan = prefs.getBoolean("home_maoyan_ranking", false)
+        // UI 偏好（榜单开关、搜索推荐策略、画质偏好…）退出登录不清，重登后保持用户选择
+        val keepTv = homeTvRanking
+        val keepMaoyan = homeMaoyanRanking
+        val keepMovie = homeMovieRanking
+        val keepOrder = homeRankingOrder
+        val keepStrategy = searchSortStrategy
+        val keepQuality = qualityPref
+        val keepDirect = showDirectSearch
+        val keepMeta = showMediaMeta
+        val keepAutoUpdate = autoCheckUpdate
         prefs.edit().clear().apply()
         prefs.edit()
-            .putBoolean("home_tv_ranking", keepRanking)
+            .putBoolean("home_tv_ranking", keepTv)
             .putBoolean("home_maoyan_ranking", keepMaoyan)
+            .putBoolean("home_movie_ranking", keepMovie)
+            .putString("home_ranking_order", keepOrder.joinToString(","))
+            .putInt("search_sort_strategy", keepStrategy)
+            .putInt("quality_pref", keepQuality)
+            .putBoolean("show_direct_search", keepDirect)
+            .putBoolean("show_media_meta", keepMeta)
+            .putBoolean("auto_check_update", keepAutoUpdate)
             .apply()
     }
 }

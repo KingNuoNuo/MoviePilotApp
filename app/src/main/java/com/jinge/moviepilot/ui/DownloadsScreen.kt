@@ -1059,6 +1059,8 @@ private fun parseSeasonEpisodeFromTitle(raw: String): String? {
  *
  * 杜比分两类：`DV`/`DoVi`/`Dolby Vision` → 杜比视界（画质）；`Atmos` → 杜比全景声（音效）。
  * ⚠️ `DV` 必须带词边界（避开 `DVDRip`）、`HDR` 同理（避开 `HDRip`）；`HDR10`/`HDR10+` 一律显示 HDR。
+ *
+ * 分辨率那一段不在这里写正则：与资源列表「画质偏好」排序共用 [resolutionLabel]，避免两套口径。
  */
 private fun parseSpecs(raw: String): String? {
     val upper = raw.uppercase()
@@ -1066,11 +1068,7 @@ private fun parseSpecs(raw: String): String? {
     fun hit(vararg patterns: String) = patterns.any { Regex(it).containsMatchIn(upper) }
 
     val parts = mutableListOf<String>()
-    when {
-        hit("(?<![0-9A-Z])2160[PI](?![0-9A-Z])", "(?<![0-9A-Z])4K(?![0-9A-Z])") -> parts += "2160P"
-        hit("(?<![0-9A-Z])1080[PI](?![0-9A-Z])") -> parts += "1080P"
-        hit("(?<![0-9A-Z])720[PI](?![0-9A-Z])") -> parts += "720P"
-    }
+    resolutionLabel(raw)?.let { parts += it }
     if (hit("(?<![A-Z])(?:DOVI|DV)(?![A-Z])", "DOLBY[ ._-]?VISION", "杜比视界")) parts += "杜比视界"
     if (hit("(?<![A-Z])ATMOS", "杜比全景声")) parts += "杜比全景声"
     if (hit("(?<![A-Z])HDR(?:10\\+?)?(?![A-Z0-9])")) parts += "HDR"
