@@ -411,7 +411,7 @@ fun MediaSearchScreen(
     key: Int,
     showRanking: Boolean = true,
     showMaoyanRanking: Boolean = false,
-    /** 是否显示「电影票房榜」页签（国内 / 全球年度票房，同样依赖 MaoyanPro 插件快照） */
+    /** 是否显示「电影票房榜」页签（国内 / 全球年度票房，同样依赖 GlobalRankPro 插件快照） */
     showMovieRanking: Boolean = false,
     /** 当前是否显示在屏幕上（常驻组合保状态用）；隐藏时返回键拦截必须失效 */
     visible: Boolean = true,
@@ -1577,9 +1577,9 @@ private fun MaoyanPlatformRow(selected: Int, onSelect: (Int) -> Unit) {
  * 首页猫眼榜单：平台切换行（全网｜腾讯视频｜爱奇艺｜芒果TV｜优酷）+ 左右两列
  * （左 = 剧集热度：电视剧 + 网络剧；右 = 综艺热度）。
  *
- * 数据来源是服务端自建插件「猫眼榜单」（MaoyanPro）：猫眼热度接口有美团 H5guard 反爬，
- * App 直连一律 403，只能复用服务端无头浏览器抓到的榜单快照。
- * 插件对外接口 `GET /plugin/MaoyanPro/rank?board_type=web-all|zongyi&platform=<platformType>`
+ * 数据来源是服务端自建插件「全球影视榜单」（GlobalRankPro）的猫眼源：猫眼热度接口有美团
+ * H5guard 反爬，App 直连一律 403，只能复用服务端无头浏览器抓到的榜单快照。
+ * 插件对外接口 `GET /plugin/GlobalRankPro/rank?source=maoyan&board_type=web-all|zongyi&platform=<platformType>`
  * 走宿主默认的 API 令牌鉴权（X-API-KEY），因此 App 的令牌模式即可读取，不再需要账号密码登录态。
  * 标题行由调用方渲染（单榜=榜单标题 / 双榜=胶囊页签），这里出平台切换行 + 列头 + 两列列表。
  */
@@ -1649,7 +1649,7 @@ private fun MaoyanRankingBoard(
             errMsg = when {
                 offline -> "连接失败，正在自动重试…"
                 platformType.isEmpty() ->
-                    "猫眼榜单暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+                    "猫眼榜单暂无数据（需服务端启用「全球影视榜单」插件并刷新一次）"
                 else ->
                     "该平台暂无榜单数据（需在服务端插件配置中开启该平台的推荐开关并刷新一次）"
             }
@@ -1797,7 +1797,7 @@ private fun MaoyanColumn(
 /**
  * 首页电影票房榜：左右两列（左 = 国内年度票房 / `board_type=year`；右 = 全球年度票房 / `global`）。
  *
- * 数据同样来自 MaoyanPro 插件快照（猫眼年度票房榜 + boxofficemojo 全球榜），接口条目自带
+ * 数据同样来自 GlobalRankPro 插件快照的猫眼源（猫眼年度票房榜 + boxofficemojo 全球榜），接口条目自带
  * `box_office`（如「44.21亿」/「25.14亿美元」）与 `releaseInfo`（如「2026-02-17 上映」），
  * 无需逐条异步补日期。全球榜原名是英文，渲染与回搜都优先用插件识别出的中文名 `title_cn`。
  * 列头行由本组件渲染（与猫眼/豆瓣榜同款列头），页签行 / 标题行由调用方渲染。
@@ -1850,7 +1850,7 @@ private fun MovieRankingBoard(
             errMsg = if (offline) {
                 "连接失败，正在自动重试…"
             } else {
-                "电影票房榜暂无数据（需服务端启用「猫眼榜单」插件并刷新一次）"
+                "电影票房榜暂无数据（需服务端启用「全球影视榜单」插件并刷新一次）"
             }
             attempt++
             // 不是网络问题（插件确实没数据）就别无限重试：试满 3 次就停在提示上

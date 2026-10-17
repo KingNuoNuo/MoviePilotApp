@@ -98,6 +98,15 @@ class MpApi(private val store: TokenStore) {
 
         /** 重登去重窗口：这段时间内的第二次 401 直接复用刚刷新的 token，不再打登录接口 */
         private const val RELOGIN_DEDUPE_MS = 3_000L
+
+        /**
+         * 榜单数据来自的插件 id。
+         *
+         * 历史：最早是 MaoyanPro（`/plugin/MaoyanPro/rank`，只有猫眼、无 source 参数）；
+         * 猫眼 + Netflix 合并后统一由 GlobalRankPro 提供，接口多了 `source=maoyan|netflix|all`，
+         * 返回结构与旧版兼容（`boards[].items` / `updated_at`），所以界面侧无需改动。
+         */
+        private const val RANK_PLUGIN_ID = "GlobalRankPro"
     }
 
     class ApiException(message: String) : Exception(message)
@@ -128,7 +137,7 @@ class MpApi(private val store: TokenStore) {
      * 统一用账号密码登录换来的 JWT（`Authorization: Bearer`）。
      *
      * v3.1.5 实测：App 用到的全部接口最终都走 `verify_token`，它同时接受 JWT、API Key
-     * 与 API Token，三种凭据等效；插件侧 MaoyanPro 也声明了 `auth="bear"`。
+     * 与 API Token，三种凭据等效；插件侧 GlobalRankPro 也声明了 `auth="bear"`。
      * 所以已不再需要 API 令牌，全部收敛到账号密码 + （可选）二步验证。
      */
     private fun authHeader(): Pair<String, String>? =
@@ -478,15 +487,18 @@ class MpApi(private val store: TokenStore) {
         MediaTileInfo(actors = actors, seasonDate = latestSeasonAirDate(obj))
     }.getOrDefault(MediaTileInfo())
 
-    // ---------- 猫眼榜单（数据取自服务端自建插件 MaoyanPro「猫眼榜单」） ----------
+    // ---------- 猫眼榜单（数据取自服务端自建插件 GlobalRankPro「全球影视榜单」的猫眼源） ----------
 
     /**
-     * 读取服务端 MaoyanPro 插件抓取的猫眼榜单快照。
+     * 读取服务端 GlobalRankPro 插件抓取的猫眼榜单快照。
      *
      * 说明：猫眼热度接口（/i/api/encrypt/dashboard/webHeatData）有美团 H5guard 反爬，
      * App 直连一律 403，只能复用服务端插件用无头浏览器抓到的结果。
-     * 插件对外暴露 `GET /plugin/MaoyanPro/rank`，默认走宿主 API 令牌鉴权（X-API-KEY），
-     * 因此无需 superuser 或账号密码登录态。
+     * 插件对外暴露 `GET /plugin/GlobalRankPro/rank?source=maoyan`，走宿主 `bear` 鉴权
+     * （App 登录态 JWT / API 令牌等价），因此无需 superuser。
+     *
+     * 历史：早期由 MaoyanPro 插件提供（`/plugin/MaoyanPro/rank`，无 source 参数），
+     * 现已并入 GlobalRankPro，猫眼数据只是其中一个 source；旧插件已下线（404）。
      *
      * @param boardType 榜单类型：`web-all` 剧集热度（电视剧+网络剧）、`zongyi` 综艺热度、
      *                  `movie` 电影票房、`web-movie` 网络电影
@@ -498,12 +510,13 @@ class MpApi(private val store: TokenStore) {
      */
     suspend fun maoyanRank(boardType: String, limit: Int = 10, platform: String? = null): List<JsonObject> {
         val params = linkedMapOf<String, String?>(
+            "source" to "maoyan",
             "board_type" to boardType,
             "limit" to limit.toString(),
         )
         if (platform != null) params["platform"] = platform
         val data = unwrap(
-            get(baseUrl(), "$apiPrefix/plugin/MaoyanPro/rank", params)
+            get(baseUrl(), "$apiPrefix/plugin/$RANK_PLUGIN_ID/rank", params)
         )
         val obj = data as? JsonObject ?: return emptyList()
         val boards = obj["boards"]?.jsonArray ?: return emptyList()
@@ -515,7 +528,9 @@ class MpApi(private val store: TokenStore) {
 
     /** 榜单快照的更新时间（yyyy-MM-dd HH:mm:ss），用于界面上标注「更新」时间 */
     suspend fun maoyanRankUpdatedAt(): String? {
-        val data = unwrap(get(baseUrl(), "$apiPrefix/plugin/MaoyanPro/rank", emptyMap()))
+        val data = unwrap(
+            get(baseUrl(), "$apiPrefix/plugin/$RANK_PLUGIN_ID/rank", mapOf("source" to "maoyan"))
+        )
         val obj = data as? JsonObject ?: return null
         return obj.str("updated_at")?.takeIf { it.isNotBlank() }
     }
@@ -1350,7 +1365,7 @@ class TokenStore(private val prefs: android.content.SharedPreferences) {
         get() = prefs.getBoolean("home_maoyan_ranking", false)
         set(v) { prefs.edit().putBoolean("home_maoyan_ranking", v).apply() }
 
-    /** 首页电影票房榜开关（默认关：同猫眼，数据也来自 MaoyanPro 插件）。属 UI 偏好，退出登录时保留 */
+    /** 首页电影票房榜开关（默认关：同猫眼，数据也来自 GlobalRankPro 插件）。属 UI 偏好，退出登录时保留 */
     var homeMovieRanking: Boolean
         get() = prefs.getBoolean("home_movie_ranking", false)
         set(v) { prefs.edit().putBoolean("home_movie_ranking", v).apply() }
