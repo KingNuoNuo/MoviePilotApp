@@ -840,7 +840,7 @@ fun SettingsScreen(
             RowDivider()
             // 三行开关固定顺序展示；顺序本身由上方「榜单排序」条调整（行序不随拖动变，避免视觉跳动）
             SettingSwitchRow(
-                title = "豆瓣榜单",
+                title = "豆瓣电视榜单",
                 desc = "首页展示豆瓣国内/国外剧集周榜，点击可直接搜索",
                 checked = rankingOn,
                 onCheckedChange = { rankingOn = it; store.homeTvRanking = it },
@@ -848,7 +848,7 @@ fun SettingsScreen(
             )
             RowDivider()
             SettingSwitchRow(
-                title = "猫眼榜单",
+                title = "猫眼电视榜单",
                 desc = "首页展示猫眼电视剧/综艺热度榜",
                 // 徽标即入口：点这颗跳插件仓库，不再单起一行重复说「插件」
                 badge = {

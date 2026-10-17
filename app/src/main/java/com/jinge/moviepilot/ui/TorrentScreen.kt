@@ -436,10 +436,11 @@ object QualityPref {
  *   未播完的季 → 先「含最新已播集」再分层再速度（实测追更剧资源多为「第05-06集」这类分段包，
  *   只看速度分会因 1080p 体积小、分数虚高，把中间那段旧集顶到第一，含最新集的包反被压在后面）；
  *   已完结 / 未知 → 整季包 → 多集包 → 单集，组内按速度分。
- * - **最新集优先**：始终先「含最新已播集」，组内**按速度**（不再看整季/多集/单集分层）——
- *   这是它与智能推荐的真正区别：智能推荐在「含最新」组里还要整季包优先，而本策略认为
- *   「含最新的里面挑最快的」更合理；选集某一集时同样先含该集、再按速度（智能推荐此时是纯速度）。
- *   拿不到最新已播集信息（已完结/未知）时 latest 键恒等，自然退化为速度优先。
+ * - **最新集优先**：按「覆盖到的最大集号」**降序**——E34 → E33 → E28 …（同集号再按速度），
+ *   整季包（解析不出集号但被认成整季的）视为覆盖全集排最前；解析不出集号的杂项记为最旧。
+ *   早期实现只按「是否覆盖到最新已播集」的二值分组、组内按速度，于是 E33(做种96) 压过 E34(94)，
+ *   最新集反而不在最前（实测余红旧事 S01 219 条就是这个现象），故改为真正的集号序。
+ *   拿不到最新已播集（已完结/未知）也照样按集号降序，自然退化为「集号大的在前、同集号看速度」。
  * - **整季包优先**：始终按分层（即使选了某一集）。
  * - **做种速度优先** / **小体积优先**：只用速度 / 体积，不管分层。
  *
@@ -468,12 +469,16 @@ fun sortTorrents(
         val size: Long,
         val tier: Int,
         val latest: Int,
+        /** 覆盖到的最大集号；整季包记 Int.MAX_VALUE（覆盖全集），解析不出集号的杂项记 0（最旧） */
+        val epKey: Int,
     )
 
     val rows = results.map { ctx ->
         val tr = ctxTorrent(ctx)
         val title = tr?.str("title")
         val desc = tr?.str("description")
+        val tier = torrentTier(title, desc)
+        val maxEp = parseEpisodeRange(title, desc)?.last
         SortRow(
             ctx = ctx,
             speed = speedScore(tr) ?: Double.NEGATIVE_INFINITY,
@@ -481,8 +486,11 @@ fun sortTorrents(
             quality = if (wantTier == null) 0
             else if (resolutionTier(listOfNotNull(title, desc).joinToString(" ")) == wantTier) 0 else 1,
             size = tr?.long("size") ?: Long.MAX_VALUE,
-            tier = torrentTier(title, desc),
+            tier = tier,
             latest = if (coversLatest(tr, latestAired)) 0 else 1,
+            // 「最新集优先」的排序依据：有集号就用最大集号；没有集号的，整季包当覆盖全集排最前，
+            // 认不出类型的当最旧（否则命名不规范的杂项会被误顶到第一位）
+            epKey = maxEp ?: if (tier == 0) Int.MAX_VALUE else 0,
         )
     }
 
@@ -497,9 +505,10 @@ fun sortTorrents(
             compareBy<SortRow> { it.quality }.thenBy { it.tier }.thenByDescending { it.speed }
 
         SortStrategy.LATEST ->
-            // 与智能推荐的区别：不加 tier 键 —— 含最新的里面挑最快的，不再整季包优先；
-            // 选集时也先含该集再按速度（智能推荐选集时是纯速度，见 else 分支）
-            compareBy<SortRow> { it.quality }.thenBy { it.latest }.thenByDescending { it.speed }
+            // 真正的「集号优先」：覆盖到的最新集号越大越前（整季包 = 覆盖全集排最前），
+            // 同集号再比做种速度。旧实现只分「含最新 / 不含最新」两档、组内纯速度，
+            // 会让 E33 压过 E34，见上面的策略说明。
+            compareBy<SortRow> { it.quality }.thenByDescending { it.epKey }.thenByDescending { it.speed }
 
         else ->
             if (episode != null) compareBy<SortRow> { it.quality }.thenByDescending { it.speed }
@@ -575,6 +584,16 @@ private fun TorrentList(
             }
         }
     }
+    // 「含最新」绿标的基准集号：未播完用真实的最新已播集；拿不到时（已完结 / 总集数未知），
+    // 「最新集优先」会用本批资源的最大集号兜底排序 —— 标注也跟着用同一基准，否则会被标得莫名其妙。
+    val latestBasis = remember(shown, latestAired, strategy) {
+        latestAired ?: if (strategy == SortStrategy.LATEST) {
+            shown.mapNotNull { ctx ->
+                val tr = ctx["torrent_info"] as? JsonObject
+                parseEpisodeRange(tr?.str("title"), tr?.str("description"))?.last
+            }.maxOrNull()
+        } else null
+    }
     // 排序：先按全局画质偏好置顶，再按设置页选的推荐策略（见 sortTorrents）
     val sorted = remember(shown, episode, latestAired, strategy, qualityPref) {
         sortTorrents(shown, episode, latestAired, strategy, qualityPref)
@@ -597,8 +616,8 @@ private fun TorrentList(
             TorrentCard(
                 context = ctx,
                 isRecommended = ctx == recommended,
-                // 只有未播完、且该资源确实覆盖到最新已播集时才标「含最新」，解释它为什么被推荐
-                showLatest = episode == null && coversLatest(ctx["torrent_info"] as? JsonObject, latestAired),
+                // 只有「覆盖到最新集」的资源才标「含最新」，解释它为什么被推荐
+                showLatest = episode == null && coversLatest(ctx["torrent_info"] as? JsonObject, latestBasis),
                 onDownload = { doDownload(ctx) },
                 onSubscribe = {
                     val m = ctx["media_info"] as? JsonObject ?: media

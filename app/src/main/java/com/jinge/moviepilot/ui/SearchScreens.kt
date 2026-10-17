@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -22,6 +24,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FileDownload
@@ -33,11 +38,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -478,45 +488,118 @@ fun MediaSearchScreen(
 
     val isHome = searchedText.isEmpty() && !loading && results.isEmpty() && error == null
 
+    /**
+     * 搜索框：白卡 52dp / 14dp 圆角（与首页榜单卡同族），聚焦时 1.5dp 主色描边。
+     *
+     * 为什么不用 `OutlinedTextField`：它的最小高度 56dp、内边距不可控，字压不住 15sp 的节奏，
+     * 而且没法把「直接搜种子」这颗按钮并进框内（以前是框外独立的一颗白方块，两颗各自带阴影、
+     * 视觉上完全脱节）。这里自绘：左侧放大镜 / 返回箭头 + 中间 BasicTextField + 右侧种子按钮，
+     * 点卡片任意空白处都会聚焦输入框（放大镜是最常被点的位置）。
+     */
     val searchBar: @Composable (Modifier) -> Unit = { modifier ->
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = modifier,
-            placeholder = { Text("搜索电影、剧集...", color = Color(0xFFA6AABE)) },
-            leadingIcon = {
-                // 首页：放大镜；结果态：返回箭头（点它清空搜索回首页）
-                if (isHome) {
-                    Icon(Icons.Default.Search, null, tint = Color(0xFFA6AABE))
-                } else {
-                    IconButton(onClick = { backToHome() }, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回首页",
-                            tint = TextTertiary,
-                            modifier = Modifier.size(20.dp)
-                        )
+        val interaction = remember { MutableInteractionSource() }
+        val focused by interaction.collectIsFocusedAsState()
+        val focusRequester = remember { FocusRequester() }
+        val shape = RoundedCornerShape(14.dp)
+        Row(
+            modifier
+                .height(52.dp)
+                .then(
+                    // 描边已经足够说明「正在输入」，同时保留阴影会让卡片发糊：二选一
+                    if (focused) Modifier
+                    else Modifier.shadow(
+                        elevation = 1.dp,
+                        shape = shape,
+                        spotColor = Color(0x1A1A1C2B),
+                        ambientColor = Color(0x1A1A1C2B),
+                    )
+                )
+                .clip(shape)
+                .background(Color.White)
+                .then(if (focused) Modifier.border(1.5.dp, primary, shape) else Modifier)
+                // 整卡可点 → 聚焦输入框；indication 置空，免得点一下整张卡泛涟漪
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { focusRequester.requestFocus() },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isHome) {
+                Icon(
+                    Icons.Default.Search, null,
+                    tint = if (focused) primary else TextTertiary,
+                    modifier = Modifier.padding(start = 14.dp).size(18.dp)
+                )
+            } else {
+                // 结果态：返回箭头（点它清空搜索回首页）
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { backToHome() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回首页",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = if (isHome) 8.dp else 4.dp)
+                    .focusRequester(focusRequester),
+                textStyle = TextStyle(fontSize = 15.sp, color = TextPrimary),
+                singleLine = true,
+                cursorBrush = SolidColor(primary),
+                interactionSource = interaction,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = { if (query.isNotBlank()) doMediaSearch(query.trim()) }
+                ),
+                decorationBox = { inner ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text(
+                                "搜索电影、剧集…",
+                                fontSize = 15.sp,
+                                color = Color(0xFFA6AABE),
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip
+                            )
+                        }
+                        inner()
                     }
                 }
-            },
-            shape = RoundedCornerShape(28.dp),
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedContainerColor = Color.White,
-                focusedContainerColor = Color.White,
-                unfocusedTextColor = TextPrimary,
-                focusedTextColor = TextPrimary,
-                cursorColor = primary,
-                unfocusedBorderColor = Color.Transparent,
-                focusedBorderColor = primary,
-            ),
-            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                onSearch = { if (query.isNotBlank()) doMediaSearch(query.trim()) }
-            ),
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                imeAction = androidx.compose.ui.text.input.ImeAction.Search
             )
-        )
+            // 直达按钮可关掉（有人只用媒体搜索/榜单，不需要这颗按钮占宽）
+            if (showDirectSearch) {
+                val directEnabled = query.isNotBlank()
+                Box(
+                    Modifier
+                        .padding(vertical = 6.dp, horizontal = 6.dp)
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (directEnabled) SelectedPill else FieldFill)
+                        .clickable(enabled = directEnabled) { onDirectSearch(query.trim()) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.FileDownload,
+                        contentDescription = "直接搜种子资源",
+                        tint = if (directEnabled) SelectedPillText else Color(0xFFC3C6D4),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            } else {
+                Spacer(Modifier.width(14.dp))
+            }
+        }
     }
 
     // 搜索结果态：物理返回键先回首页，而不是直接退出 app（隐藏态下不拦截，让位给其他板块）
@@ -568,39 +651,8 @@ fun MediaSearchScreen(
                     )
                     Spacer(Modifier.height(28.dp))
                 }
-                // 搜索框 + 右侧「直接搜种子资源」直达按钮
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    searchBar(
-                        Modifier
-                            .weight(1f)
-                            .shadow(8.dp, RoundedCornerShape(28.dp), spotColor = Color(0x265A63D8))
-                    )
-                    // 直达按钮可在设置页「搜索」里关掉（有人只用媒体搜索/榜单，不需要这颗按钮占宽）
-                    if (showDirectSearch) {
-                        Spacer(Modifier.width(10.dp))
-                        Box(
-                            Modifier
-                                .size(52.dp)
-                                .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = Color(0x265A63D8))
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color.White)
-                                .clickable(enabled = query.isNotBlank()) {
-                                    if (query.isNotBlank()) onDirectSearch(query.trim())
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.FileDownload,
-                                contentDescription = "直接搜种子资源",
-                                tint = if (query.isNotBlank()) primary else Color(0xFFC3C6D4),
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                }
+                // 搜索框（种子入口已并进卡片右侧，不再单独占一颗悬浮方块）
+                searchBar(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
                 if (anyRanking) {
                     Spacer(Modifier.height(16.dp))
                     Column(
@@ -626,7 +678,7 @@ fun MediaSearchScreen(
                             // 只开一个榜：没有页签，改用榜单自己的标题行（同样带更新时间）
                             RankingBoardTitle(
                                 title = when (selectedTab) {
-                                    "maoyan" -> "猫眼榜单"
+                                    "maoyan" -> "猫眼电视榜单"
                                     "tv" -> "豆瓣电视榜单"
                                     else -> "电影票房榜"
                                 },
