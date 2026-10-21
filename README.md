@@ -10,7 +10,6 @@
 [![Forks](https://img.shields.io/github/forks/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp/network/members)
 [![Watchers](https://img.shields.io/github/watchers/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp/watchers)
 [![Issues](https://img.shields.io/github/issues/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp/issues)
-[![License](https://img.shields.io/github/license/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5&label=Release)](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest)
 [![Last Commit](https://img.shields.io/github/last-commit/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp/commits/main)
 [![Top Language](https://img.shields.io/github/languages/top/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp)
@@ -46,16 +45,6 @@
 - Android 8.0+（minSdk 26）
 - 已部署 MoviePilot v3 的服务器
 
-## 许可
-
-本项目自 **v0.3** 起采用 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）发布，版权归 KingNuoNuo 所有。
-
-AGPL-3.0 的核心要求是：**任何分发本程序、或分发基于本程序修改后的版本（包括以网络服务形式对外提供），都必须把完整源代码一并公开，并以同样的许可授权。** 你可以自由使用、修改、再分发，但不能把它变成闭源的。
-
-**历史版本**：v0.2 及以前的版本以 MIT 许可发布。MIT 授权不可撤销——已经获取的历史版本副本仍可按 MIT 条款继续使用，本次变更只对 v0.3 起的版本生效。
-
-MoviePilotApp 是独立客户端，仅通过 HTTP API 与 [MoviePilot](https://github.com/jxxghp/MoviePilot)（GPL-3.0）通信，不包含其源代码。
-
 ## English
 
 **MoviePilotApp** is a third-party Android client for [MoviePilot](https://github.com/jxxghp/MoviePilot) v3, written in Kotlin with Jetpack Compose and Material 3.
@@ -64,8 +53,6 @@ MoviePilotApp 是独立客户端，仅通过 HTTP API 与 [MoviePilot](https://g
 - Streaming (SSE) site search with live per-site progress and a tiered recommendation ranking (full season > multi-episode > single episode)
 - Download manager with live progress and speed, pause / resume / delete, and library-import status
 - Subscription management, API-token or password login with automatic token refresh, in-app updates from GitHub Releases
-
-Licensed under the [GNU Affero General Public License v3.0](LICENSE) since v0.3. Versions up to v0.2 were released under the MIT License.
 
 <!-- traffic:start -->
 
