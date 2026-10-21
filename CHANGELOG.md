@@ -178,7 +178,7 @@ MoviePilotApp 各版本的更新内容。安装包在 [Releases](https://github.
 
 ### 许可变更
 
-- 本项目自本版起由 **MIT** 改为 **GNU Affero General Public License v3.0（AGPL-3.0）** 发布，完整条款见 [LICENSE](LICENSE)。
+- 本项目自本版起由 **MIT** 改为 **GNU Affero General Public License v3.0（AGPL-3.0）** 发布，完整条款见 [AGPL-3.0 官方文本](https://www.gnu.org/licenses/agpl-3.0.html)。
 - 核心要求：**任何分发本程序、或分发基于本程序修改后的版本（包括以网络服务形式对外提供），都必须把完整源代码一并公开，并以 AGPL-3.0 授权。**
 - **v0.2 及以前的版本仍为 MIT**。MIT 授权不可撤销，已获取的历史版本副本可继续按 MIT 条款使用。
 
