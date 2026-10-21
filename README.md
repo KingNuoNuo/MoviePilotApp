@@ -14,7 +14,6 @@
 [![Release](https://img.shields.io/github/v/release/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5&label=Release)](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest)
 [![Last Commit](https://img.shields.io/github/last-commit/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp/commits/main)
 [![Top Language](https://img.shields.io/github/languages/top/KingNuoNuo/MoviePilotApp?style=flat&color=4F46E5)](https://github.com/KingNuoNuo/MoviePilotApp)
-[![Build](https://github.com/KingNuoNuo/MoviePilotApp/actions/workflows/release.yml/badge.svg)](https://github.com/KingNuoNuo/MoviePilotApp/actions/workflows/release.yml)
 [![Telegram](https://img.shields.io/badge/Telegram-交流群组-4F46E5?style=flat&logo=telegram&logoColor=white)](https://t.me/+5THbEeY2QLNjNjI1)
 
 [⬇️ 下载 APK](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) · [📋 更新日志](CHANGELOG.md) · [🐛 反馈问题](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💡 功能建议](https://github.com/KingNuoNuo/MoviePilotApp/issues) · [💬 Telegram 交流群](https://t.me/+5THbEeY2QLNjNjI1)
@@ -42,14 +41,6 @@
 
 到 [Releases](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) 页面下载 `MoviePilotApp-vX.Y.Z.apk` 安装。应用内「设置 → 应用更新」也能直接检测并安装。
 
-## 构建
-
-```bash
-./gradlew assembleRelease
-```
-
-Release 签名需要 `keystore.properties`（或环境变量 `KEYSTORE_PATH` / `KEYSTORE_PASSWORD` / `KEY_PASSWORD`），文件不入库。推 `v*` tag 会触发 GitHub Actions 自动构建并发布 Release（已开启 R8 代码压缩与资源压缩）。
-
 ## 环境要求
 
 - Android 8.0+（minSdk 26）
@@ -73,8 +64,6 @@ MoviePilotApp 是独立客户端，仅通过 HTTP API 与 [MoviePilot](https://g
 - Streaming (SSE) site search with live per-site progress and a tiered recommendation ranking (full season > multi-episode > single episode)
 - Download manager with live progress and speed, pause / resume / delete, and library-import status
 - Subscription management, API-token or password login with automatic token refresh, in-app updates from GitHub Releases
-
-Signed release APKs are published automatically by GitHub Actions on every `v*` tag.
 
 Licensed under the [GNU Affero General Public License v3.0](LICENSE) since v0.3. Versions up to v0.2 were released under the MIT License.
 
