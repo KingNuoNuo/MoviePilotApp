@@ -36,6 +36,22 @@
 - **认证** —— API 令牌或账号密码登录，JWT 失效自动重登，启动自动探测连接状态
 - **应用内更新** —— 直接检查 GitHub Release，新版可下载并唤起系统安装器
 
+## 主题
+
+三套配色，设置 → 主题风格里随时切换。顶部 banner 里是默认的「经典」（浅灰蓝），另外两套：
+
+<p align="center">
+  <img src="theme-fashion.webp" width="250" alt="时尚主题">
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="theme-glass.webp" width="250" alt="暗夜玻璃主题">
+</p>
+
+<p align="center">
+  <sub><b>时尚</b> —— 紫罗兰主色，圆角更大，页签改用下划线</sub>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <sub><b>暗夜玻璃</b> —— 深藏蓝页底，半透明面板 + 细白描边</sub>
+</p>
+
 ## 下载
 
 到 [Releases](https://github.com/KingNuoNuo/MoviePilotApp/releases/latest) 页面下载 `MoviePilotApp-vX.Y.Z.apk` 安装。应用内「设置 → 应用更新」也能直接检测并安装。
@@ -53,3 +69,4 @@
 - Streaming (SSE) site search with live per-site progress and a tiered recommendation ranking (full season > multi-episode > single episode)
 - Download manager with live progress and speed, pause / resume / delete, and library-import status
 - Subscription management, API-token or password login with automatic token refresh, in-app updates from GitHub Releases
+- Three themes: classic (light indigo), fashion (violet), and glass (dark translucent)
